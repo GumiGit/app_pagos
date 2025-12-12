@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, send_file,
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.utils import secure_filename
+from flask_migrate import Migrate
 
 import io
 import traceback
@@ -71,6 +72,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # 🛑 1. DEFINICIÓN DE DB (PRIMERO)
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
 # ========== Login ==========
 login_manager = LoginManager()
