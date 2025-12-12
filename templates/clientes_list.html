@@ -1,0 +1,547 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2 class="mb-2">Clientes registrados</h2>
+
+<!-- Totales por status -->
+<div id="resumenStatus" class="mb-4 d-flex flex-wrap gap-2 resumen-status"></div>
+
+<div class="mb-3 d-flex justify-content-between align-items-center flex-wrap">
+  {% if current_user.role in ['SUPERADMIN', 'ADMIN'] %}
+  <div>
+    <!-- Botón de Agregar Cliente movido al menú superior, pero lo dejamos como fallback si es necesario -->
+    <a href="{{ url_for('clientes_nuevo') }}" class="btn btn-success d-none d-md-inline-block">
+      <i class="fa fa-plus"></i> Agregar cliente
+    </a>
+  </div>
+  {% endif %}
+
+  <div class="d-flex gap-2 mt-2 mt-md-0">
+    <select id="filtroServer" class="form-select form-select-sm" style="width:180px;">
+      <option value="">Filtrar por Server</option>
+    </select>
+    <select id="filtroPais" class="form-select form-select-sm" style="width:180px;">
+      <option value="">Filtrar por País</option>
+    </select>
+    <select id="filtroPaquete" class="form-select form-select-sm" style="width:180px;">
+      <option value="">Filtrar por Paquete</option>
+    </select>
+  </div>
+</div>
+
+<table id="tablaClientes" class="table table-striped table-hover align-middle" style="width:100%;">
+  <thead class="table-primary text-center">
+    <tr>
+      <th class="card-header text-center">ID</th>
+      <th class="card-header text-center">ID Gumi</th>
+      <th class="card-header text-center">Server</th>
+      <th class="card-header text-center">País</th>
+      <th class="card-header text-center">Status</th>
+      <th class="card-header text-center">Status Pago</th>
+      <th class="card-header text-center">Negocio</th>
+      <th class="card-header text-center">Nombre de contacto</th>
+      <th class="card-header text-center">Teléfonos</th>
+      <th class="card-header text-center">Mail</th>
+      <th class="card-header text-center">Paquete</th>
+      <th class="card-header text-center">Último pago</th>
+      <th class="card-header text-center">Próximo pago</th>
+      <th class="card-header text-center">Acciones</th>
+    </tr>
+  </thead>
+</table>
+
+<div class="toast-container position-fixed bottom-0 end-0 p-3"></div>
+
+{% endblock %}
+
+
+{% block custom_scripts %}
+<!-- 🛑 SCRIPTS ESPECÍFICOS DE LA LÓGICA DE CLIENTES 🛑 -->
+<!-- NOTA: jQuery, SweetAlert y las librerías base de DataTables están en base.html -->
+<script>
+let dtClientes; 
+
+$(document).ready(function() {
+  
+  const userRole = '{{ current_user.role }}';
+  const canModify = userRole === 'SUPERADMIN' || userRole === 'ADMIN';
+
+  // En clientes_list.html y cliente_detalle.html
+  function formatearFecha(f) {
+    if (!f) return '--';
+    // Se asegura de que la fecha sea interpretada correctamente
+    const d = new Date(f + 'T00:00:00'); 
+    if (isNaN(d.getTime())) return '--'; // getTime() es más robusto para verificar fecha inválida
+    return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  }
+
+  dtClientes = $('#tablaClientes').DataTable({
+    ajax: { url: '/api/clientes_dt', dataSrc: 'data' },
+    columns: [
+      { data: 'id' },
+      { data: 'id_gumi', defaultContent: '' },
+      { data: 'server', defaultContent: '' },
+      { data: 'pais', defaultContent: '' },
+      {
+        data: 'status',
+        render: function (data, type, row) {
+          const color =
+            data === 'Activo' ? 'bg-success' :
+            data === 'Suspendido' ? 'bg-warning text-dark' :
+            data === 'Eliminado' ? 'bg-danger' :
+            'bg-info text-dark';
+          const estados = ['Activo', 'Suspendido', 'Eliminado', 'En prueba'];
+          
+          const menuItems = estados.map(e => {
+                if (!canModify) { 
+                    return `<li><span class="dropdown-item disabled text-muted">${e}</span></li>`;
+                }
+                return `<li><a class="dropdown-item cambiar-status" href="#" data-id="${row.id}" data-status="${e}">${e}</a></li>`;
+            }).join('');
+          
+          return `
+            <div class="dropdown">
+              <button class="badge rounded-pill px-3 py-2 dropdown-toggle ${color}" data-bs-toggle="dropdown" data-id="${row.id}" ${!canModify ? 'disabled' : ''}>
+                ${data}
+              </button>
+              <ul class="dropdown-menu">${menuItems}</ul>
+            </div>`;
+        }
+      },
+
+      {
+        data: 'status_pago_info',
+        render: function (data, type, row) {
+          if (!data || data.status === 'SIN PAGO')
+            return '<span class="badge bg-secondary">Sin Pago</span>';
+          
+          return `<span class="badge rounded-pill ${data.color} px-3 py-2">
+                    ${data.status}
+                  </span>`;
+        }
+      },
+
+      {
+        data: 'negocio',
+        render: (data, type, row) =>
+          `<a href="/clientes/${row.id}/detalle" class="text-decoration-none fw-semibold">${data}</a>`
+      },
+
+      { data: 'nombre_contacto' },
+      {
+        data: null,
+        // 🛑 FIX: Convertir a String y eliminar .0 para el enlace de WhatsApp
+        render: function (data, type, row) {
+          let t = '';
+          const cleanPhone = (phone) => String(phone || '').replace(/\.0$/, '');
+
+          const telefonoPrincipal = cleanPhone(row.telefono);
+          const telSec1 = cleanPhone(row.tel_sec_1);
+          const telSec2 = cleanPhone(row.tel_sec_2);
+          const telSec3 = cleanPhone(row.tel_sec_3);
+
+          if (telefonoPrincipal)
+            t += `<a href="https://wa.me/${telefonoPrincipal}" target="_blank" class="d-block fw-bold text-success">${telefonoPrincipal}</a>`;
+          
+          [telSec1, telSec2, telSec3].forEach(sec => {
+            if (sec)
+              t += `<a href="https://wa.me/${sec}" target="_blank" class="d-block small text-muted">${sec}</a>`;
+          });
+          return t || '--';
+        }
+      },
+      {
+        data: 'mail',
+        render: data => data ? `<a href="mailto:${data}" class="text-decoration-none">${data}</a>` : '--'
+      },
+      { data: 'paquete', defaultContent: '' },
+      { data: 'ultimo_pago', render: f => formatearFecha(f) },
+      { data: 'proximo_pago', render: f => formatearFecha(f) },
+      {
+        data: 'id',
+        render: function(id, type, row) {
+          
+          if (row.status === 'Eliminado') {
+            return `
+              <a href="/clientes/${id}/detalle" class="btn btn-sm btn-outline-danger" title="Ver detalles">
+                <i class="fa-solid fa-eye"></i> VER
+              </a>`;
+         }
+         
+          if (!canModify) {
+              return `
+                  <a href="/clientes/${id}/detalle" class="btn btn-sm btn-outline-primary" title="Ver detalles">
+                    <i class="fa-solid fa-eye"></i> VER
+                  </a>
+              `;
+          }
+          
+          return `
+            <div class="d-flex gap-2 justify-content-center">
+              <a href="/clientes/${id}/editar" class="btn btn-sm btn-primary" title="Editar">
+                <i class="fa-regular fa-pen-to-square"></i>
+              </a>
+              <button class="btn btn-sm btn-success btn-agregar-pago" data-id="${id}" title="Agregar pago">
+                <i class="fa-solid fa-coins"></i>
+              </button>
+            </div>`;
+        }
+      }
+    ],
+    responsive: true,
+    pageLength: 25, 
+    lengthMenu: [
+        [10, 25, 50, -1],
+        ['10', '25', '50', 'Todos']
+    ],
+    dom: 'lBfrtip',
+    rowCallback: function(row, data) {
+        if (data.status === 'Eliminado') {
+            $(row).addClass('table-danger');
+        }
+    },
+    buttons: [
+      { extend: 'excelHtml5', text: '<i class="fa fa-file-excel"></i> Excel', className: 'btn btn-success btn-sm' },
+      { extend: 'csvHtml5', text: '<i class="fa fa-file-csv"></i> CSV', className: 'btn btn-outline-secondary btn-sm' },
+      { extend: 'copyHtml5', text: '<i class="fa fa-copy"></i> Copiar', className: 'btn btn-outline-dark btn-sm' }
+    ],
+    language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/es-MX.json' },
+    initComplete: function() {
+      const api = this.api();
+      actualizarTotales(api.rows({search: 'applied'}).data());
+
+      api.columns([2, 3, 10]).every(function (index) {
+
+        let selectId;
+        if (index === 2) {
+          selectId = '#filtroServer';
+        } else if (index === 3) {
+          selectId = '#filtroPais';
+        } else { // index === 10
+          selectId = '#filtroPaquete';
+        }
+
+        const select = $(selectId);
+        
+        select.empty().append('<option value="">Todos</option>');
+        this.data().unique().sort().each(function (d) {
+          if (d) select.append(`<option value="${d}">${d}</option>`);
+        });
+        select.on('change', () => {
+          api.column(index).search(select.val() ? '^' + select.val() + '$' : '', true, false).draw();
+          actualizarTotales(api.rows({search: 'applied'}).data());
+        });
+      });
+
+      dtClientes.on('draw', () => actualizarTotales(api.rows({search: 'applied'}).data()));
+    }
+  });
+
+  // ===========================
+  // CAMBIO DE STATUS
+  // ===========================
+  $('#tablaClientes').on('click', '.cambiar-status', async function(e) {
+    e.preventDefault();
+    const clienteId = $(this).data('id');
+    const nuevoStatus = $(this).data('status');
+    
+    if (!canModify) return; 
+
+    if (nuevoStatus === 'Eliminado') {
+      const confirm = await Swal.fire({
+        title: '¿Eliminar cliente?',
+        text: 'Esta acción marcará al cliente como "Eliminado" en el sistema.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#6c757d'
+      });
+      if (!confirm.isConfirmed) return;
+    }
+
+    const resp = await fetch(`/api/clientes/${clienteId}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: nuevoStatus })
+    });
+    const data = await resp.json();
+
+    if (data.ok) {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: `Status cambiado a "${nuevoStatus}"`,
+        showConfirmButton: false,
+        timer: 2000
+      });
+      dtClientes.ajax.reload(null, false); 
+    }
+  });
+
+  // ===========================
+  // MODAL: AGREGAR PAGO - HABILITACIÓN DE EDICIÓN DE MONTO
+  // ===========================
+  $('#tablaClientes').on('click', '.btn-agregar-pago', async function () {
+    const clienteId = $(this).data('id');
+
+    if (!canModify) return; 
+    
+    const resp = await fetch(`/api/cliente_pago/${clienteId}`);
+    const data = await resp.json();
+
+    if (!data.ok) {
+      Swal.fire('Error', data.error || 'No se pudo cargar la información.', 'error');
+      return;
+    }
+
+    const { negocio, pais, paquete_actual, paquete_id_actual, paquetes } = data.data;
+
+    const opcionesPaquete = paquetes.map(p => {
+      // Usamos `p.id` como value, que es lo que debe enviarse al backend
+      const isSelected = String(p.id) === String(paquete_id_actual);
+      return `<option value="${p.id}" ${isSelected ? 'selected' : ''}>
+        ${p.nombre} – ${p.vigencia} (${p.moneda} ${p.precio.toFixed(2)})
+      </option>`;
+    }).join('');
+
+    const { value: formValues } = await Swal.fire({
+      title: `Agregar pago – ${negocio}`,
+      width: 700,
+      html: `
+        <div class="text-start">
+          <label class="form-label mt-2">Fecha de pago *</label>
+          <input type="date" id="fecha_pago" class="form-control" value="${new Date().toISOString().split('T')[0]}" required>
+
+          <label class="form-label mt-2">Paquete *</label>
+          <select id="paquete" class="form-select">${opcionesPaquete}</select>
+
+          <label class="form-label mt-2">Monto total</label>
+          <!-- Se inicializa el monto con el paquete seleccionado por defecto, AHORA ES EDITABLE -->
+          <input type="text" id="monto" class="form-control text-end" placeholder="Ej: 1500.00"> 
+
+          <label class="form-label mt-2">Método de pago *</label>
+          <select id="metodo_pago" class="form-select">
+            <option value="">— Selecciona —</option>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Depósito">Depósito</option>
+            <option value="Mercado Pago">Mercado Pago</option>
+            <option value="Nequi">Nequi</option>
+            <option value="Otro">Otro</option>
+          </select>
+
+          <div id="campo_otro_metodo" style="display:none;">
+            <label class="form-label mt-2">Especifica método</label>
+            <input type="text" id="otro_metodo_pago" class="form-control">
+          </div>
+
+          <label class="form-label mt-2">Motivo del descuento</label>
+          <input type="text" id="motivo_descuento" class="form-control">
+
+          <div class="form-check form-switch mt-3">
+            <input class="form-check-input" type="checkbox" id="factura_pago">
+            <label class="form-check-label" for="factura_pago">¿Se factura este pago?</label>
+          </div>
+
+          <div id="campo_num_factura" style="display:none;">
+            <label class="form-label mt-2">Número de factura</label>
+            <input type="text" id="numero_factura" class="form-control">
+          </div>
+        </div>
+      `,
+      focusConfirm: false,
+      confirmButtonText: 'Guardar pago',
+      cancelButtonText: 'Cancelar',
+      showCancelButton: true,
+      didOpen: () => {
+        const selPaquete = document.getElementById('paquete');
+        const campoMonto = document.getElementById('monto');
+        
+        // Función para obtener el objeto paquete por ID (NOTA: compara por el valor en string del select)
+        function getPaquete(id) {
+            // Utilizamos la comparación con String() para asegurar la coincidencia de tipos
+            return paquetes.find(x => String(x.id) === String(id)); 
+        }
+
+        // Función de utilidad para formatear moneda
+        const formatCurrency = (amount, currency) => {
+            return new Intl.NumberFormat('es-MX', {
+                style: 'currency',
+                currency: currency,
+                minimumFractionDigits: 2,
+            }).format(amount).replace(/[^0-9.,]/g, ''); // Quitamos símbolos para que solo quede el número editable
+        };
+        
+        // Función para actualizar el monto y mantenerlo como número plano
+        function actualizarMonto() {
+          const p = getPaquete(selPaquete.value);
+          if (p) {
+              // Se muestra el precio puro del paquete (sin símbolo de moneda)
+              campoMonto.value = formatCurrency(p.precio, p.moneda);
+          } else {
+              campoMonto.value = '';
+          }
+        }
+
+        selPaquete.addEventListener('change', actualizarMonto);
+        
+        // Inicializar el monto al abrir el modal
+        actualizarMonto(); 
+
+        document.getElementById('metodo_pago').addEventListener('change', (e) => {
+          document.getElementById('campo_otro_metodo').style.display = e.target.value === 'Otro' ? 'block' : 'none';
+        });
+        document.getElementById('factura_pago').addEventListener('change', (e) => {
+          document.getElementById('campo_num_factura').style.display = e.target.checked ? 'block' : 'none';
+        });
+        
+      },
+      preConfirm: () => {
+          const fecha_pago = document.getElementById('fecha_pago').value;
+          const paquete_id_seleccionado = document.getElementById('paquete').value; 
+          
+          const metodo_pago = document.getElementById('metodo_pago').value;
+          const otro_metodo_pago = document.getElementById('otro_metodo_pago').value;
+          const motivo_descuento = document.getElementById('motivo_descuento').value;
+          const factura_pago = document.getElementById('factura_pago').checked;
+          const numero_factura = document.getElementById('numero_factura').value;
+          const monto_input_str = document.getElementById('monto').value; 
+
+          const p = paquetes.find(x => String(x.id) === String(paquete_id_seleccionado));
+          const esDemo = p && (p.nombre || '').toUpperCase().includes('DEMO');
+
+          if (!paquete_id_seleccionado) {
+            Swal.showValidationMessage('El paquete es obligatorio');
+            return false;
+          }
+
+          if (!esDemo) {
+            if (!fecha_pago) {
+                Swal.showValidationMessage('La fecha de pago es obligatoria (para paquetes con costo)');
+                return false;
+            }
+            if (!metodo_pago) {
+                Swal.showValidationMessage('El método de pago es obligatorio (para paquetes con costo)');
+                return false;
+            }
+            // Validación de Monto (CRÍTICA)
+            if (!monto_input_str || isNaN(parseFloat(monto_input_str.replace(/,/g, '')))) {
+                Swal.showValidationMessage('El monto debe ser un número válido.');
+                return false;
+            }
+          }
+          
+          let monto_num = 0;
+          let moneda = 'MXN';
+          
+          // 🛑 FIX: Tomamos el monto del input y limpiamos los separadores de miles (comas)
+          monto_num = parseFloat(monto_input_str.replace(/,/g, ''));
+          
+          // Tomamos la moneda del paquete seleccionado (aunque el monto haya sido editado)
+          if (p) {
+              moneda = p.moneda;
+          } else {
+              console.error("No se encontró el paquete con ID:", paquete_id_seleccionado);
+          }
+
+
+          return {
+            fecha_pago: fecha_pago,
+            paquete_id: paquete_id_seleccionado, 
+            metodo_pago: metodo_pago,
+            otro_metodo_pago: metodo_pago === 'Otro' ? otro_metodo_pago : '', // Solo enviar si es 'Otro'
+            motivo_descuento: motivo_descuento,
+            factura_pago: factura_pago,
+            numero_factura: numero_factura,
+            monto: monto_num, // Enviamos el monto editable
+            moneda: moneda, 
+          };
+        }
+    });
+
+    if (!formValues) return;
+    
+    // 🛑 DEBUG CLAVE: Muestra el JSON que se enviará al servidor
+    console.log("PAYLOAD ENVIADO A /api/pagos/nuevo:", { cliente_id: clienteId, ...formValues });
+    // 🛑 Si el paquete_id aquí es correcto (e.g., el ID de CLÍNICA), el error es en el BACKEND.
+
+    const respPago = await fetch('/api/pagos/nuevo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cliente_id: clienteId, ...formValues })
+    });
+    const dataPago = await respPago.json();
+
+    if (dataPago.ok) {
+      Swal.fire({
+        icon: 'success',
+        title: 'Pago registrado correctamente',
+        toast: true,
+        timer: 2000,
+        position: 'top-end',
+        showConfirmButton: false
+      });
+      dtClientes.ajax.reload(null, false); 
+    } else {
+      Swal.fire('Error', dataPago.error || 'No se pudo registrar el pago', 'error');
+    }
+  });
+
+
+  function actualizarTotales(data) {
+    const counts = { 'Activo': 0, 'Suspendido': 0, 'Eliminado': 0, 'En prueba': 0 };
+    data.each(row => { 
+        // 🛑 FIX: Asegurar que el status exista antes de incrementar
+        const status = row.status || 'N/A';
+        if (counts[status] !== undefined) {
+            counts[status]++; 
+        } else {
+            // Si el status no está en la lista de conteo, lo inicializa
+            counts[status] = 1; 
+        }
+    });
+    
+    // 🛑 FIX: Usar counts["En prueba"] para el display de Demo
+    document.getElementById('resumenStatus').innerHTML = `
+      <span class="me-3 text-success">Activos: ${counts.Activo}</span>
+      <span class="me-3 text-warning">Suspendidos: ${counts.Suspendido}</span>
+      <span class="me-3 text-danger">Eliminados: ${counts.Eliminado}</span>
+      <span class="text-info">Demo: ${counts["En prueba"]}</span>
+    `;
+  }
+  
+  // 🛑 FIX: Inicializar el filtro de server/país/paquete con la lista completa si no hay datos.
+  function initializeFilters(api) {
+    api.columns([2, 3, 10]).every(function (index) {
+        let selectId;
+        if (index === 2) {
+          selectId = '#filtroServer';
+        } else if (index === 3) {
+          selectId = '#filtroPais';
+        } else { // index === 10
+          selectId = '#filtroPaquete';
+        }
+        
+        const select = $(selectId);
+        select.empty().append('<option value="">Todos</option>');
+        
+        this.data().unique().sort().each(function (d) {
+          if (d) select.append(`<option value="${d}">${d}</option>`);
+        });
+
+        select.off('change').on('change', () => {
+            api.column(index).search(select.val() ? '^' + select.val() + '$' : '', true, false).draw();
+            actualizarTotales(api.rows({search: 'applied'}).data());
+        });
+    });
+  }
+
+  // Si hay problemas de rendimiento o inicialización de filtros,
+  // podríamos llamar initializeFilters dentro de initComplete.
+  // Actualmente, ya está en initComplete, lo cual es correcto.
+
+});
+</script>
+{% endblock %}

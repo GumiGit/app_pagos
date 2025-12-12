@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Registros de pagos</h2>
+
+{% if registros %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Nombre</th>
+            <th>Correo</th>
+            <th>Monto</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for pago in registros %}
+        <tr>
+            <td>{{ pago.id }}</td>
+            <td>{{ pago.nombre }}</td>
+            <td>{{ pago.correo }}</td>
+            <td>${{ "%.2f"|format(pago.monto) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No hay registros aún.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,123 @@
+/* === Estilos globales === */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700&display=swap');
+
+body {
+    padding-top: 70px; /* espacio para navbar fijo */
+    font-family: 'Nunito', sans-serif;
+    background-color: #fff;
+    color: #262626;
+}
+header {
+    background: #0277bd;
+    color: white;
+    padding: 10px;
+    border-radius: 8px;
+}
+
+/* Navbar */
+.navbar {
+  background-color: #00b0ac !important;
+}
+.navbar .nav-link,
+.navbar .navbar-brand {
+  color: #fff !important;
+}
+.navbar .nav-link:hover {
+  opacity: 0.85;
+}
+nav a {
+    color: white;
+    margin-right: 15px;
+    text-decoration: none;
+}
+
+/* Trays */
+.card-header {
+  background-color: #e7e0d2 !important;
+  color: #262626 !important;
+  font-weight: 600;
+}
+
+.card {
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+/* Botones (verde principal) */
+.btn-primary {
+  background-color: #198754 !important;
+  border-color: #198754 !important;
+}
+.btn-primary:hover {
+  background-color: #157347 !important;
+  border-color: #157347 !important;
+}
+
+/* Textos y etiquetas */
+label.form-label {
+  font-weight: 600;
+}
+
+h2, h5 {
+  font-weight: 700;
+}
+
+.txt-detalles {
+  font-size: 1.2em;
+}
+
+table th, table td {
+    text-align: left;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+thead {
+  background-color: #e7e0d2 !important;
+}
+th, td {
+    padding: 8px;
+    border: 1px solid #ccc;
+    text-align: left;
+}
+button {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: #0277bd;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+button:hover {
+    background: #01579b;
+}
+.resumen-status {
+  background-color: #f0f0f0;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.btn-editar {
+  color: #fff;
+}
+
+.dt-buttons {
+  display: inline;
+  margin-left: 50px;
+  margin-bottom: 25px;
+}
+.dataTables_length {
+  margin-top: 10px;
+  margin-bottom: 30px;
+}
+.dataTables_info {
+  margin-bottom: 40px;
+}
+
+.swal2-confirm {
+  background-color: #198754;
+}

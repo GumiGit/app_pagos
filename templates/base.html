@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Pagos GUMI GPT v3</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- DataTables CSS -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.bootstrap5.min.css">
+
+    <!-- Font Awesome 6.6.0 -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"
+      referrerpolicy="no-referrer"
+    />
+    
+    <!-- Select2 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet" />
+    
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <!-- Bloque para estilos específicos de cada página (ej. Dashboard) -->
+    {% block head %}{% endblock %}
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="{{ url_for('clientes_list') }}"><img src="{{ url_for('static', filename='images/logo-gumi.png') }}" alt="Gumi Control" width="100"></a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse float-right" id="navbarNav">
+      <ul class="navbar-nav w-100 align-items-center">
+        {% if current_user.is_authenticated %}
+            
+            <!-- A) BUSCADOR DE CLIENTES (Barra Central) -->
+            <li class="nav-item mx-5 d-none d-lg-block flex-grow-1">
+                <div class="input-group">
+                    <span class="input-group-text bg-white text-primary border-0"><i class="fa-solid fa-search"></i></span>
+                    <!-- input field para la búsqueda rápida -->
+                    <input class="form-control border-0" type="search" placeholder="Negocio, contacto, email" aria-label="Search" id="buscadorRapidoClientes">
+                </div>
+            </li>
+
+            <!-- B) GRUPO DE ACCIONES RÁPIDAS (Botones Directos) -->
+            <li class="nav-item">
+                <a class="nav-link btn btn-warning text-dark px-3 rounded-pill fw-bold me-2" href="{{ url_for('clientes_nuevo') }}">
+                    <i class="fa-solid fa-plus-circle me-1"></i> NUEVO CLIENTE
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link btn btn-info text-dark px-3 rounded-pill fw-bold me-2" href="{{ url_for('conciliacion_list') }}">
+                    <i class="fa-solid fa-money-check-dollar me-1"></i> CONCILIAR
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link btn btn-light text-warning px-3 rounded-pill fw-bold me-2" href="{{ url_for('clientes_por_vencer_list') }}" title="Clientes próximos a vencer">
+                    <i class="fa-solid fa-bell me-1"></i> POR VENCER
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link btn btn-secondary px-3 rounded-pill fw-bold me-2" href="{{ url_for('clientes_demo_list') }}" title="Clientes en plan Demo">
+                    <i class="fa-solid fa-flask me-1"></i> DEMO
+                </a>
+            </li>
+
+            <!-- C) GRUPO DE VISTAS (Dropdown de Navegación) -->
+            <li class="nav-item dropdown">
+                <a class="nav-link dropdown-toggle" href="#" id="navbarVistas" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="fa-solid fa-bars"></i> Vistas
+                </a>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarVistas">
+                    <!-- Clientes -->
+                    <li><a class="dropdown-item fw-bold" href="{{ url_for('clientes_list') }}">
+                        <i class="fa-solid fa-users me-1"></i> CLIENTES (Lista Maestra)
+                    </a></li>
+                    
+                    <!-- Pagos -->
+                    <li><a class="dropdown-item fw-bold" href="{{ url_for('pagos_list_global') }}">
+                        <i class="fa-solid fa-coins me-1"></i> PAGOS (Histórico)
+                    </a></li>
+                    
+                    <li><hr class="dropdown-divider"></li>
+
+                    <!-- DASHBOARD -->
+                    <li><a class="dropdown-item" href="{{ url_for('dashboard') }}">
+                        <i class="fa-solid fa-chart-line me-1"></i> Dashboard
+                    </a></li>
+
+                    <li><hr class="dropdown-divider"></li>
+                    
+                    <!-- ADMIN (Submenú de Gestión) -->
+                    <li class="dropdown-header text-primary">ADMINISTRACIÓN</li>
+
+                    {% if current_user.role == 'SUPERADMIN' %}
+                        <li><a class="dropdown-item" href="{{ url_for('clientes_importar') }}">
+                            <i class="fa-solid fa-file-import me-1"></i> Carga CSV Clientes
+                        </a></li>
+                        <li><a class="dropdown-item" href="{{ url_for('conciliacion_importar') }}">
+                            <i class="fa-solid fa-file-csv me-1"></i> Carga CSV Conciliación
+                        </a></li>
+                        <li><a class="dropdown-item" href="{{ url_for('paquetes_precios_list') }}">
+                            <i class="fa-solid fa-tags me-1"></i> Catálogo de Precios
+                        </a></li>
+                        <li><a class="dropdown-item" href="{{ url_for('usuarios_list') }}">
+                            <i class="fa-solid fa-user-gear me-1"></i> Gestión de Usuarios
+                        </a></li>
+                    {% endif %}
+                </ul>
+            </li>
+
+            <!-- Cierre de Sesión -->
+            <li class="nav-item ms-3">
+                <a class="nav-link btn btn-danger text-white px-3 fw-bold" href="{{ url_for('logout') }}" title="Cerrar Sesión">
+                    <i class="fa-solid fa-right-from-bracket"></i> LOGOUT
+                </a>
+            </li>
+
+        {% else %}
+            <!-- Menú para usuarios no autenticados -->
+            <li class="nav-item"><a class="nav-link" href="{{ url_for('clientes_nuevo') }}">Registro</a></li>
+            <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}">Login</a></li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container mt-5 pt-3"> <!-- Agregado padding top para compensar el fixed-top nav -->
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="alert alert-info mt-2">
+          {% for message in messages %}
+            <div>{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+</div>
+<script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<!-- Select2 JS (Necesario para el modal de conciliación) -->
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<!-- SweetAlert2 (Para notificaciones de éxito/error) -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+<!-- DataTables -->
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.dataTables.min.css">
+
+
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.print.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+
+<script>
+  // Inicializa cualquier tabla con clase .datatable
+  $(function () {
+    $('.datatable').DataTable({
+      pageLength: 10,
+      dom: 'Bfrtip',
+      buttons: ['csv', 'excel', 'print'],
+    });
+  });
+</script>
+
+{% block custom_scripts %}{% endblock %}
+
+<script>
+    // ==========================================
+    // 🛑 LÓGICA DE BUSCADOR RÁPIDO DE CLIENTES
+    // ==========================================
+    $(document).ready(function() {
+        const $buscador = $('#buscadorRapidoClientes');
+        let currentSearch = '';
+        let timer;
+        const REDIRECT_URL_TEMPLATE = '{{ url_for("cliente_detalle", cliente_id=0) }}';
+        
+        // Usamos un datalist virtual para simular la coincidencia y luego redirigir
+
+        // 1. Manejar la búsqueda al escribir
+        $buscador.on('keyup', function() {
+            const query = $(this).val().trim();
+            if (query.length < 3) return;
+
+            // Limpia el temporizador anterior para evitar llamadas excesivas
+            clearTimeout(timer);
+            
+            timer = setTimeout(function() {
+                // Si la consulta no ha cambiado, no volvemos a buscar
+                if (currentSearch === query) return;
+                currentSearch = query;
+
+                // 2. Llamada AJAX para obtener sugerencias
+                $.ajax({
+                    url: '{{ url_for("api_clientes_search_menu") }}',
+                    data: { q: query },
+                    dataType: 'json',
+                    success: function(response) {
+                        // Crear o actualizar el datalist (aunque no es visible, lo usamos para almacenar datos)
+                        let $datalist = $('#clienteSugerencias');
+                        if ($datalist.length === 0) {
+                            $datalist = $('<datalist id="clienteSugerencias"></datalist>').insertAfter($buscador);
+                            $buscador.attr('list', 'clienteSugerencias');
+                        }
+                        $datalist.empty();
+                        
+                        // Recorrer resultados y añadir opciones
+                        response.forEach(function(cliente) {
+                            const optionText = `${cliente.negocio} (${cliente.nombre_contacto})`;
+                            // Almacenamos el ID en el valor
+                            $datalist.append($('<option>', {
+                                value: optionText,
+                                'data-id': cliente.id
+                            }));
+                        });
+                    }
+                });
+            }, 300); // Espera 300ms después de la última pulsación
+        });
+
+        // 3. Manejar la selección y redirección
+        $buscador.on('change', function() {
+            const selectedText = $(this).val();
+            // Buscar la opción seleccionada en el datalist
+            const selectedOption = $('#clienteSugerencias option').filter(function() {
+                return $(this).val() === selectedText;
+            });
+
+            if (selectedOption.length > 0) {
+                const clienteId = selectedOption.data('id');
+                if (clienteId) {
+                    // Redirigir al detalle del cliente
+                    const redirectUrl = REDIRECT_URL_TEMPLATE.replace('0', clienteId);
+                    window.location.href = redirectUrl;
+                }
+            }
+            // Limpiar la barra después de la búsqueda fallida/exitosa
+            $(this).val('');
+            currentSearch = '';
+        });
+    });
+</script>
+
+</body>
+</html>

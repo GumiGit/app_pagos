@@ -1,0 +1,209 @@
+{% extends 'base.html' %}
+
+{% block head %}
+    <style>
+        .monto-col { min-width: 100px; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-4">
+                <div class="card-header pb-0 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        Catálogo de Precios
+                    </h5>
+                    <button class="btn btn-sm btn-primary mb-3" id="btnNuevoPaquete">
+                        <i class="fa-solid fa-plus me-1"></i> Registrar Nuevo Precio
+                    </button>
+                </div>
+                <div class="card-body p-4">
+                    <div class="table-responsive p-0">
+                        <table class="table align-items-center mb-0" id="tablaPaquetesPrecios">
+                            <thead>
+                                <tr>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">País</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">Paquete</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">Vigencia</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-end card-header">Precio Base</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">Moneda</th>
+                                    <th class="text-secondary opacity-7 text-center card-header">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- DataTables carga aquí -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block custom_scripts %}
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+    let dtPaquetes;
+    
+    // Función para mostrar el modal de creación/edición
+    async function showPaqueteModal(id = null) {
+        const isEdit = id !== null;
+        const today = new Date().toISOString().split('T')[0];
+        let data = { 
+            pais: 'MÉXICO', 
+            paquete: '', 
+            vigencia: 'MENSUAL', 
+            precio: '', 
+            moneda: 'MXN',
+            fecha_vigencia: today // Por defecto, hoy
+        };
+        
+        if (isEdit) {
+            try {
+                const resp = await fetch(`/api/paquetes_precios/${id}`);
+                const json = await resp.json();
+                if (!json.ok) {
+                    Swal.fire('Error', json.error, 'error');
+                    return;
+                }
+                data = json.data;
+            } catch (e) {
+                Swal.fire('Error', 'Error de conexión al obtener datos.', 'error');
+                return;
+            }
+        }
+
+        const title = isEdit ? 'Editar Precio Vigente' : 'Registrar Nuevo Precio (Historial)';
+        
+        const { value: formValues } = await Swal.fire({
+            title: title,
+            width: 500,
+            html: `
+                <div class="text-start">
+                    <label class="form-label mt-2">País *</label>
+                    <select id="swal-pais" class="form-select">${['MÉXICO', 'COLOMBIA', 'LATAM'].map(p => 
+                        `<option value="${p}" ${data.pais === p ? 'selected' : ''}>${p}</option>`).join('')}
+                    </select>
+
+                    <label class="form-label mt-2">Nombre del Paquete *</label>
+                    <input type="text" id="swal-paquete" class="form-control" value="${data.paquete}" required>
+
+                    <label class="form-label mt-2">Vigencia *</label>
+                    <select id="swal-vigencia" class="form-select">${['DEMO', 'MENSUAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'].map(v => 
+                        `<option value="${v}" ${data.vigencia === v ? 'selected' : ''}>${v}</option>`).join('')}
+                    </select>
+                    
+                    <label class="form-label mt-2">Precio Base *</label>
+                    <input type="number" id="swal-precio" class="form-control text-end" value="${data.precio}" step="0.01" min="0" required>
+
+                    <label class="form-label mt-2">Moneda *</label>
+                    <select id="swal-moneda" class="form-select">${['MXN', 'COP', 'USD'].map(m => 
+                        `<option value="${m}" ${data.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}
+                    </select>
+                    
+                    <label class="form-label mt-2">Fecha de Vigencia (A partir de) *</label>
+                    <input type="date" id="swal-fecha-vigencia" class="form-control" value="${data.fecha_vigencia}" required>
+                </div>
+            `,
+            focusConfirm: false,
+            confirmButtonText: isEdit ? 'Guardar Cambios' : 'Registrar Nuevo Precio',
+            showCancelButton: true,
+            preConfirm: () => {
+                const pais = document.getElementById('swal-pais').value;
+                const paquete = document.getElementById('swal-paquete').value;
+                const vigencia = document.getElementById('swal-vigencia').value;
+                const precio = parseFloat(document.getElementById('swal-precio').value);
+                const moneda = document.getElementById('swal-moneda').value;
+                const fecha_vigencia = document.getElementById('swal-fecha-vigencia').value;
+
+                if (!pais || !paquete || !vigencia || isNaN(precio) || precio < 0 || !fecha_vigencia) {
+                    Swal.showValidationMessage('Todos los campos son obligatorios.');
+                    return false;
+                }
+                return { pais, paquete, vigencia, precio, moneda, fecha_vigencia };
+            }
+        });
+
+        if (!formValues) return;
+
+        // Enviar datos al backend
+        const url = isEdit ? `/api/paquetes_precios/editar/${id}` : '/api/paquetes_precios/nuevo';
+        const method = 'POST';
+
+        try {
+            const resp = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formValues)
+            });
+            const json = await resp.json();
+
+            if (json.ok) {
+                Swal.fire({ 
+                    icon: 'success', 
+                    title: 'Precio Registrado', 
+                    text: isEdit ? 'Se actualizó el registro' : 'Se creó un nuevo registro de precio histórico. La tabla muestra la versión más reciente.',
+                    timer: 3000, 
+                    showConfirmButton: false 
+                });
+                dtPaquetes.ajax.reload(null, false);
+            } else {
+                Swal.fire('Error', json.error || 'No se pudo guardar.', 'error');
+            }
+        } catch (e) {
+            Swal.fire('Error', 'Error de conexión con el servidor.', 'error');
+        }
+    }
+
+    $(document).ready(function() {
+        // Inicialización de DataTables
+        dtPaquetes = $('#tablaPaquetesPrecios').DataTable({
+            ajax: {
+                url: '/api/paquetes_precios_dt',
+                dataSrc: 'data'
+            },
+            order: [[0, 'asc'], [1, 'asc']],
+            pageLength: 25,
+            columns: [
+                { data: 'pais' },
+                { data: 'paquete' },
+                { data: 'vigencia' },
+                { 
+                    data: 'precio', 
+                    className: 'text-end monto-col',
+                    render: $.fn.dataTable.render.number(',', '.', 2, '')
+                },
+                { data: 'moneda' },
+                { 
+                    data: 'id',
+                    className: 'text-center',
+                    orderable: false,
+                    render: function(id) {
+                        return `
+                            <button class="btn btn-sm btn-primary btn-editar-paquete" data-id="${id}" title="Editar (Registrar nuevo precio)">
+                                <i class="fa-regular fa-pen-to-square"></i> Editar
+                            </button>
+                        `;
+                    }
+                }
+            ],
+            language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/es-MX.json' }
+        });
+
+        // Listeners para botones
+        $('#btnNuevoPaquete').on('click', () => showPaqueteModal(null));
+        
+        // Delegación de eventos para editar
+        $('#tablaPaquetesPrecios').on('click', '.btn-editar-paquete', function() {
+            showPaqueteModal($(this).data('id'));
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,724 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+{% set modo_edicion = modo_edicion|default(false) %}
+{% set is_public = is_public|default(false) %}
+
+{% set es_lead = (modo_edicion and suscripcion and suscripcion.status == 'En prueba') %}
+
+{% set es_cliente_activo = (modo_edicion and not es_lead) %}
+
+{% if modo_edicion %}
+    {% set is_public = false %}
+{% endif %}
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>
+          {% if modo_edicion %}
+             {% if es_lead %}
+                <i class="fa-solid fa-user-check text-success"></i> Validar y Activar Cliente
+             {% else %}
+                <i class="fa-solid fa-pen-to-square text-primary"></i> Editar Cliente
+             {% endif %}
+          {% else %}
+            {{ 'Registro público' if is_public else 'Nuevo Cliente (Admin)' }}
+          {% endif %}
+        </h2>
+        {% if not is_public %}
+            <a href="{{ url_for('clientes_list') }}" class="btn btn-outline-secondary btn-sm">
+                <i class="fa-solid fa-arrow-left"></i> Regresar
+            </a>
+        {% endif %}
+    </div>
+
+    <form method="POST">
+      
+      <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-primary text-white" data-bs-toggle="collapse" data-bs-target="#trayDatos" style="cursor:pointer;">
+          <h5 class="mb-0">Datos Generales</h5>
+        </div>
+        <div id="trayDatos" class="collapse show">
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">Negocio *</label>
+                <input type="text" name="negocio" class="form-control" value="{{ cliente.negocio if cliente else '' }}" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Nombre de contacto *</label>
+                <input type="text" name="nombre_contacto" class="form-control" value="{{ cliente.nombre_contacto if cliente else '' }}" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Mail *</label>
+                <input type="email" name="mail" class="form-control" value="{{ cliente.mail if cliente else '' }}" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Teléfono (WhatsApp) *</label>
+                <input type="tel" name="telefono" class="form-control" value="{{ cliente.telefono if cliente else '' }}" placeholder="+52..." required>
+              </div>
+
+              {% if not is_public %}
+              <div class="col-md-4">
+                <label class="form-label small text-muted">Tel. secundario 1</label>
+                <input type="tel" name="telefono_secundario_1" class="form-control form-control-sm" value="{{ cliente.telefono_secundario_1 if cliente else '' }}">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small text-muted">Tel. secundario 2</label>
+                <input type="tel" name="telefono_secundario_2" class="form-control form-control-sm" value="{{ cliente.telefono_secundario_2 if cliente else '' }}">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small text-muted">Tel. secundario 3</label>
+                <input type="tel" name="telefono_secundario_3" class="form-control form-control-sm" value="{{ cliente.telefono_secundario_3 if cliente else '' }}">
+              </div>
+              {% endif %}
+
+              <div class="col-md-6">
+                <label class="form-label">País *</label>
+                <select name="pais" id="pais" class="form-select" required>
+                  {% for p in paises %}
+                    <option value="{{ p }}"
+                      {% if cliente and cliente.pais == p %}selected{% elif not cliente and p == 'MÉXICO' %}selected{% endif %}>
+                      {{ p }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Localidad / Ciudad</label>
+                <input type="text" name="localidad" class="form-control" value="{{ cliente.localidad if cliente and cliente.localidad else '' }}">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if not is_public %}
+      <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-info text-dark" data-bs-toggle="collapse" data-bs-target="#traySuscripcion" style="cursor:pointer;">
+          <h5 class="mb-0">Suscripción Gumi</h5>
+        </div>
+        <div id="traySuscripcion" class="collapse show">
+          <div class="card-body">
+            
+            {% if es_lead %}
+            <div class="alert alert-warning mb-3">
+                <i class="fa-solid fa-triangle-exclamation"></i> <strong>Cliente en Prueba:</strong> Configure los datos técnicos y registre el primer pago abajo para activarlo.
+            </div>
+            {% endif %}
+
+            <div class="row g-3 align-items-center mb-3 p-2 border rounded bg-light">
+              <div class="col-md-3">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="es_sucursal" name="es_sucursal"
+                         {% if suscripcion and suscripcion.es_sucursal %}checked{% endif %}>
+                  <label class="form-check-label fw-bold" for="es_sucursal">¿Es sucursal?</label>
+                </div>
+              </div>
+              <div class="col-md-9" id="campo_matriz" style="{% if not suscripcion or not suscripcion.es_sucursal %}display:none;{% endif %}">
+                <label class="form-label">Selecciona la Matriz</label>
+                <select class="form-select" id="matriz_nombre" name="matriz_nombre">
+                  <option value="">— Selecciona —</option>
+                  {% for cli in clientes_existentes %}
+                    <option value="{{ cli.negocio }}"
+                            {% if suscripcion and suscripcion.matriz_id == cli.id %}selected{% endif %}>
+                      {{ cli.negocio }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">ID Gumi</label>
+                <input type="text" name="id_gumi" class="form-control" value="{{ suscripcion.id_gumi if suscripcion and suscripcion.id_gumi else '' }}">
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Status *</label>
+                <select name="status" class="form-select" required>
+                  {% for estado in ['Activo','Suspendido','Eliminado','En prueba'] %}
+                    <option value="{{ estado }}" {% if suscripcion and suscripcion.status == estado %}selected{% endif %}>
+                      {{ estado }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Server *</label>
+                <select name="server" class="form-select" required>
+                  {% for s in servidores %}
+                    <option value="{{ s }}" {% if suscripcion and suscripcion.server == s %}selected{% endif %}>{{ s }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Fecha de inicio *</label>
+                <input type="date" class="form-control" id="fecha_inicio" name="fecha_inicio"
+                       value="{% if suscripcion and suscripcion.fecha_inicio %}{{ suscripcion.fecha_inicio }}{% else %}{{ date.today().isoformat() }}{% endif %}"
+                       required>
+              </div>
+
+              {% if not es_cliente_activo %}
+                  <div class="col-md-4">
+                    <label class="form-label">Paquete *</label>
+                    <select class="form-select" id="paquete" name="paquete" required></select>
+                  </div>
+
+                  <div class="col-md-4">
+                    <label class="form-label">Vigencia *</label>
+                    <select class="form-select" id="vigencia" name="vigencia" required>
+                      {% for v in vigencias %}
+                        <option value="{{ v }}">{{ v }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-md-6">
+                    <label class="form-label text-danger">Vence en (Calculado)</label>
+                    <input type="date" class="form-control bg-light" id="vence_en" name="vence_en"
+                           value="{{ suscripcion.vence_en if suscripcion else '' }}" readonly>
+                  </div>
+
+                  <div class="col-md-6">
+                    <label class="form-label text-danger">Próximo pago (Calculado)</label>
+                    <input type="date" class="form-control bg-light" id="proximo_pago" name="proximo_pago"
+                           value="{{ suscripcion.proximo_pago if suscripcion else '' }}" readonly>
+                  </div>
+              
+              {% else %}
+                  <input type="hidden" name="paquete" value="{{ suscripcion.paquete }}">
+                  <input type="hidden" name="vigencia" value="{{ suscripcion.vigencia }}">
+                  <input type="hidden" name="vence_en" value="{{ suscripcion.vence_en }}">
+                  <input type="hidden" name="proximo_pago" value="{{ suscripcion.proximo_pago }}">
+              {% endif %}
+
+              <div class="col-12">
+                <label class="form-label">Observaciones</label>
+                <textarea class="form-control" id="observaciones" name="observaciones" rows="2">{{ suscripcion.observaciones if suscripcion and suscripcion.observaciones else '' }}</textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="card mb-4 border-warning shadow-sm">
+        <div class="card-header bg-warning text-dark" data-bs-toggle="collapse" data-bs-target="#trayFiscal" style="cursor:pointer;">
+          <h5 class="mb-0">Datos Fiscales</h5>
+        </div>
+        <div id="trayFiscal" class="collapse show">
+          <div class="card-body">
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" id="requiere_factura" name="requiere_factura"
+                     {% if cliente and cliente.requiere_factura %}checked{% endif %}>
+              <label class="form-check-label ms-2 fw-bold" for="requiere_factura">¿Requiere factura?</label>
+            </div>
+
+            <div id="campos_fiscales" style="{% if not cliente or not cliente.requiere_factura %}display:none;{% endif %}">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label">Razón Social</label>
+                  <input type="text" class="form-control" name="razon_social" value="{{ cliente.razon_social if cliente else '' }}">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">RFC / NIT / Tax ID</label>
+                  <input type="text" class="form-control" name="rfc" value="{{ cliente.rfc if cliente else '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Código Postal</label>
+                  <input type="text" class="form-control" name="codigo_postal" value="{{ cliente.codigo_postal if cliente else '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Régimen Fiscal</label>
+                  <select class="form-select" name="regimen_fiscal" id="regimen_fiscal">
+                    <option value="">— Selecciona —</option>
+                    {% for k, v in catalogo_regimen.items() %}
+                      <option value="{{ k }}"
+                              {% if cliente and cliente.regimen_fiscal == k %}selected{% endif %}>
+                        {{ v }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Uso de CFDI</label>
+                  <select class="form-select" name="uso_cfdi" id="uso_cfdi">
+                    <option value="">— Selecciona —</option>
+                    {% for k, v in catalogo_uso_cfdi.items() %}
+                      <option value="{{ k }}"
+                              {% if cliente and cliente.uso_cfdi == k %}selected{% endif %}>
+                        {{ v }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-12">
+                  <label class="form-label">Mail para facturas</label>
+                  <input type="email" class="form-control" name="mail_facturas" value="{{ cliente.mail_facturas or '' }}">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if (not is_public and not modo_edicion) or es_lead %}
+      <div class="card mb-4 border-success shadow-sm">
+        <div class="card-header bg-success text-white" data-bs-toggle="collapse" data-bs-target="#trayPago" style="cursor:pointer;">
+          <h5 class="mb-0">
+              {{ 'Activación: Registro Primer Pago' if es_lead else 'Registro Primer Pago' }}
+          </h5>
+        </div>
+        <div id="trayPago" class="collapse show">
+          <div class="card-body">
+            <div class="alert alert-light border-start border-success border-5">
+                <small class="text-muted">
+                    {% if es_lead %}
+                        ℹ️ Al registrar este pago, el cliente cambiará automáticamente a estado <strong>ACTIVO</strong>.
+                    {% else %}
+                        ℹ️ Se registrará el pago y la vigencia de la suscripción.
+                    {% endif %}
+                </small>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Fecha de pago *</label>
+                <input type="date" class="form-control" id="fecha_pago" name="fecha_pago"
+                       value="{{ date.today().isoformat() }}" required>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Monto de pago</label>
+                <div class="input-group">
+                  <span class="input-group-text" id="moneda_simbolo">$</span>
+                  <input type="text" class="form-control text-end" id="precio_paquete" name="precio_paquete">
+                </div>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Moneda</label>
+                <input type="text" name="moneda_paquete" id="moneda_paquete" class="form-control" readonly>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Método de pago *</label>
+                <select class="form-select" id="metodo_pago" name="metodo_pago" required>
+                  <option value="">— Selecciona —</option>
+                  <option value="Transferencia">Transferencia</option>
+                  <option value="Depósito">Depósito</option>
+                  <option value="Mercado Pago">Mercado Pago</option>
+                  <option value="Nequi" data-colombia="true">Nequi</option>
+                  <option value="Otro">Otro</option>
+                </select>
+              </div>
+
+              <div class="col-md-8" id="campo_motivo_descuento">
+                <label class="form-label">Motivo del descuento</label>
+                <input type="text" class="form-control" id="motivo_descuento" name="motivo_descuento"
+                       placeholder="Ej. Sucursal de X o promoción especial">
+              </div>
+
+              <div class="col-md-4" id="campo_otro_metodo" style="display:none;">
+                <label class="form-label">Especifica método</label>
+                <input type="text" class="form-control" id="otro_metodo_pago" name="otro_metodo_pago">
+              </div>
+
+              <div class="col-md-4 d-flex align-items-center">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="factura_pago" name="factura_pago">
+                  <label class="form-check-label ms-2" for="factura_pago">¿Se factura este pago?</label>
+                </div>
+              </div>
+
+              <div class="col-md-4" id="campo_num_factura" style="display:none;">
+                <label class="form-label">Número de factura</label>
+                <input type="text" class="form-control" id="numero_factura" name="numero_factura">
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="text-center my-5">
+        <button type="submit" class="btn btn-success px-5 btn-lg shadow">
+          <i class="fa fa-save me-2"></i>
+          {{ 'Guardar Cambios' if modo_edicion else 'Registrar Cliente' }}
+        </button>
+      </div>
+
+    </form>
+</div>
+{% endblock %}
+
+{% block custom_scripts %}
+<script>
+// 🛑 JSON DE PRECIOS BASE PROPORCIONADO POR EL BACKEND 🛑
+const PAQUETES_POR_PAIS_MAP = {{ paquetes_por_pais | default({}) | tojson }};
+const DESCUENTO_SUCURSAL = 0.20; // 20% de descuento
+
+document.addEventListener('DOMContentLoaded', () => {
+  const MODO_EDICION = {{ 'true' if modo_edicion else 'false' }};
+  
+  // Referencias DOM
+  const form = document.querySelector('form');
+  const paisSelect = document.getElementById('pais');
+  const paqueteSelect = document.getElementById('paquete'); 
+  const vigenciaSelect = document.getElementById('vigencia'); 
+  const fechaInicio = document.getElementById('fecha_inicio');
+  const venceEn = document.getElementById('vence_en');
+  const proximoPago = document.getElementById('proximo_pago');
+  const simboloEl = document.getElementById('moneda_simbolo');
+  const monedaField = document.getElementById('moneda_paquete');
+  const precioInput = document.getElementById('precio_paquete'); // Monto de pago
+  
+  // Fiscales y Extras
+  const chkFactura = document.getElementById('requiere_factura');
+  const camposFiscal = document.getElementById('campos_fiscales');
+  const regimenFiscal = document.getElementById('regimen_fiscal');
+  const usoCfdi = document.getElementById('uso_cfdi');
+  const metodoPagoSel = document.getElementById('metodo_pago');
+  const campoOtroMetodo = document.getElementById('campo_otro_metodo');
+  
+  // Campos del PRIMER PAGO y SUCURSAL
+  const facturaSwitch = document.getElementById('factura_pago');
+  const campoFactura = document.getElementById('campo_num_factura');
+  const esSucursalSwitch = document.getElementById('es_sucursal');
+  const campoMatriz = document.getElementById('campo_matriz');
+  const matrizSelect = document.getElementById('matriz_nombre');
+  const motivoDescuento = document.getElementById('motivo_descuento');
+
+  // Helpers
+  const formatMiles = (val) => String(val||'').replace(/[^\d.]/g, '').split('.').map((p,i)=>i===0?p.replace(/\B(?=(\d{3})+(?!\d))/g,','):p).join('.');
+  const unformat = (val) => String(val || '').replace(/,/g, '');
+  const triggerChange = (el) => { if (el) el.dispatchEvent(new Event('change', { bubbles: true })); };
+
+  // 1. Moneda
+  function actualizarMoneda() {
+    if (!paisSelect || !simboloEl || !monedaField) return;
+    const pais = (paisSelect.value || '').toUpperCase();
+    if (pais === 'COLOMBIA') { simboloEl.textContent = 'COL$'; monedaField.value = 'COP'; }
+    else if (pais === 'LATAM') { simboloEl.textContent = 'US$'; monedaField.value = 'USD'; }
+    else { simboloEl.textContent = '$'; monedaField.value = 'MXN'; }
+  }
+
+  // 2. Cargar Paquetes (FIXED: Usa la lista de strings directamente)
+  function cargarPaquetes() {
+    if (!paqueteSelect || !paisSelect) return;
+    
+    // Lista de nombres de paquete (strings) que ya llega filtrada de Python
+    const unicos = PAQUETES_POR_PAIS_MAP[paisSelect.value] || []; 
+    
+    // 🛑 REMOVIDOS LOS CONSOLE.LOGS DE DEBUG 🛑
+    
+    let valActual = paqueteSelect.getAttribute('data-initial-value') || paqueteSelect.value;
+    paqueteSelect.removeAttribute('data-initial-value');
+
+    paqueteSelect.innerHTML = '<option value="">— Selecciona —</option>';
+    
+    // Si la lista está vacía y estamos en admin, forzamos la opción demo
+    if (unicos.length === 0 && !{{ is_public|lower }}) {
+        unicos.push('Demo');
+    }
+
+    unicos.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      
+      if (valActual && p === valActual) {
+          opt.selected = true;
+      }
+
+      paqueteSelect.appendChild(opt);
+    });
+    
+    // Auto-select Demo si es nuevo
+    if (!paqueteSelect.value && !MODO_EDICION) {
+       const demo = unicos.find(x => x && x.toUpperCase().includes('DEMO'));
+       paqueteSelect.value = demo || (unicos.length ? unicos[0] : '');
+    }
+  }
+
+  // 3. Sincronizar Vigencia
+  function sincronizarVigencia(dispararEvento = true) {
+    if (!paqueteSelect || !vigenciaSelect) return;
+    
+    const textoPaquete = (paqueteSelect.options[paqueteSelect.selectedIndex]?.text || '').toUpperCase();
+    const esDemo = textoPaquete.includes('DEMO');
+    
+    let opcionDemoExiste = false;
+    Array.from(vigenciaSelect.options).forEach(opt => {
+        const val = opt.value.toUpperCase();
+        if (val === 'DEMO') {
+            opt.hidden = !esDemo;
+            opt.style.display = !esDemo ? 'none' : '';
+            opcionDemoExiste = true;
+        } else {
+            opt.hidden = esDemo;
+            opt.style.display = esDemo ? 'none' : '';
+        }
+    });
+
+    let nuevoValor = vigenciaSelect.value;
+    let cambioNecesario = false;
+
+    if (esDemo) {
+        if (opcionDemoExiste && vigenciaSelect.value !== 'DEMO') {
+            nuevoValor = 'DEMO';
+            cambioNecesario = true;
+        }
+        precioInput.value = formatMiles(0); 
+        precioInput.setAttribute('readonly', 'readonly');
+    } else {
+        if (vigenciaSelect.value === 'DEMO' || !vigenciaSelect.value) {
+            nuevoValor = 'MENSUAL';
+            cambioNecesario = true;
+        }
+        precioInput.removeAttribute('readonly');
+    }
+
+    if (cambioNecesario) {
+        vigenciaSelect.value = nuevoValor;
+        if (dispararEvento) triggerChange(vigenciaSelect);
+    }
+
+    const mp = document.getElementById('metodo_pago');
+    const fp = document.getElementById('fecha_pago');
+    if(mp && fp) {
+        if(esDemo) { 
+            mp.removeAttribute('required'); 
+            fp.removeAttribute('required'); 
+        }
+        else { 
+            mp.setAttribute('required', 'required'); 
+            fp.setAttribute('required', 'required');
+        }
+    }
+  }
+
+  // 4. Calcular Fechas
+  async function recalcularFechas() {
+    if (!fechaInicio || !vigenciaSelect || !venceEn || !proximoPago) return;
+    
+    const API_CALCULO_URL = '{{ url_for("api_calcular_fechas") }}';
+    
+    let f = fechaInicio.value;
+    if (!f) { 
+        // Si no hay fecha, usamos hoy y la seteamos.
+        f = new Date().toISOString().split('T')[0]; 
+        fechaInicio.value = f; 
+    }
+    
+    const v = vigenciaSelect.value;
+    
+    // Si la vigencia es vacía, limpiamos y salimos
+    if (!v) {
+        venceEn.value = '';
+        proximoPago.value = '';
+        return;
+    }
+
+    try {
+        // 🛑 FIX CLAVE: Hacemos la llamada POST a la API para TODAS las vigencias (incluyendo DEMO).
+        const resp = await fetch(API_CALCULO_URL, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+                fecha_inicio: f,
+                vigencia: v
+             })
+        });
+        
+        const data = await resp.json();
+
+        if (data.ok) {
+            venceEn.value = data.vence_en;
+            proximoPago.value = data.proximo_pago;
+        } else {
+             // Si hay un error, limpiamos los campos
+             venceEn.value = '';
+             proximoPago.value = '';
+             console.error("Error del servidor al calcular:", data.error);
+        }
+    } catch (e) { 
+        console.error("Error al recalcular fechas (API):", e); 
+        venceEn.value = '';
+        proximoPago.value = '';
+    }
+  }
+
+  // 5. Precio (Lógica de 20% y autollenado del Monto de Pago)
+  function obtenerPrecio() {
+    if (!precioInput || !paisSelect || !paqueteSelect || !vigenciaSelect) return;
+    const p = paisSelect.value;
+    const pack = paqueteSelect.value;
+    const vig = vigenciaSelect.value;
+    
+    const suc = esSucursalSwitch ? esSucursalSwitch.checked : false; 
+    
+    if(!p || !pack || !vig) return;
+    if (pack.toUpperCase().includes('DEMO') || vig.toUpperCase().includes('DEMO')) {
+        precioInput.value = formatMiles(0);
+        return;
+    }
+
+    // Buscar el precio en el mapa local (ASUMIENDO QUE LA BÚSQUEDA DEL PRECIO ESTÁ EN PYTHON)
+    // Ya que PAQUETES_POR_PAIS_MAP solo contiene los nombres, NECESITAMOS LA FUNCIÓN API.
+    
+    // Si tienes el API Endpoint, usamos FETCH. 
+    // Si no, la lógica de descuento no funcionará correctamente ya que no tenemos el precio base.
+    
+    // Por favor, CONFIRMA si tienes este endpoint: /api/precio_paquete
+    // Si no lo tienes, la función obtenerPrecio debe buscar en un mapa de precios completo.
+    
+    // ASUMIMOS QUE EL ENDPOINT EXISTE (como en tu código base original)
+    try {
+        const url = `/api/precio_paquete?pais=${p}&paquete=${pack}&vigencia=${vig}`;
+        
+        // Llamada para obtener el precio base
+        fetch(url)
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.precio !== undefined) {
+                    let precioBase = parseFloat(data.precio);
+                    let precioFinal = precioBase;
+                    let motivoActual = motivoDescuento ? motivoDescuento.value : '';
+
+                    // Aplicar el 20% de descuento si es Sucursal
+                    if (suc && precioBase > 0) {
+                        precioFinal = precioBase * (1 - DESCUENTO_SUCURSAL);
+                        
+                        let nuevoMotivo = '';
+                        if (matrizSelect && matrizSelect.value) {
+                            nuevoMotivo = `Sucursal de ${matrizSelect.options[matrizSelect.selectedIndex].text}`; 
+                        } else {
+                            nuevoMotivo = 'Descuento del 20% por Sucursal';
+                        }
+                        
+                        if (!motivoActual || motivoActual.includes('Sucursal')) {
+                            if (motivoDescuento) motivoDescuento.value = nuevoMotivo;
+                        }
+
+                    } else {
+                        // Si se desmarca, limpiar el motivo si era automático
+                        if (motivoDescuento && motivoActual.includes('Sucursal')) {
+                            motivoDescuento.value = '';
+                        }
+                    }
+
+                    // Autollenado de Monto y Moneda
+                    precioInput.value = formatMiles(precioFinal.toFixed(2));
+                    if(data.moneda) monedaField.value = data.moneda;
+                    actualizarMoneda();
+                }
+            })
+            .catch(e => console.error("Error al obtener precio:", e));
+
+    } catch (e) { console.error("Error al iniciar fetch de precio:", e); }
+  }
+
+  // --- Listeners ---
+  if (paisSelect) {
+    paisSelect.addEventListener('change', () => {
+      actualizarMoneda();
+      const optsNequi = document.querySelectorAll('#metodo_pago option[data-colombia]');
+      const esCol = (paisSelect.value || '').toUpperCase() === 'COLOMBIA';
+      if(optsNequi) optsNequi.forEach(o => o.hidden = !esCol);
+
+      cargarPaquetes();
+      sincronizarVigencia(true); 
+    });
+  }
+
+  if (paqueteSelect) {
+    paqueteSelect.addEventListener('change', () => {
+        sincronizarVigencia(true); 
+    });
+  }
+
+  if (vigenciaSelect) {
+    vigenciaSelect.addEventListener('change', () => {
+        obtenerPrecio();
+        recalcularFechas();
+    });
+  }
+
+  if (fechaInicio) fechaInicio.addEventListener('change', recalcularFechas);
+
+  // Extras
+  if (chkFactura && camposFiscal) {
+    chkFactura.addEventListener('change', () => {
+        camposFiscal.style.display = chkFactura.checked ? 'block' : 'none';
+        if (chkFactura.checked) {
+             if (regimenFiscal && !regimenFiscal.value) regimenFiscal.value = '612';
+             if (usoCfdi && !usoCfdi.value) usoCfdi.value = 'G03';
+        }
+    });
+  }
+  
+  // SWITCH DE FACTURA PAGO (FIXED)
+  if(facturaSwitch) {
+    facturaSwitch.addEventListener('change', (e) => { 
+        if(campoFactura) campoFactura.style.display = e.target.checked ? 'block' : 'none'; 
+    });
+    triggerChange(facturaSwitch);
+  }
+
+  if(metodoPagoSel) metodoPagoSel.addEventListener('change', (e) => { if(campoOtroMetodo) campoOtroMetodo.style.display = e.target.value === 'Otro' ? 'block' : 'none'; });
+  
+  // Listener de ES SUCURSAL para recalcular precio
+  if(esSucursalSwitch) esSucursalSwitch.addEventListener('change', (e) => { 
+      if(campoMatriz) campoMatriz.style.display = e.target.checked ? 'block' : 'none'; 
+      obtenerPrecio(); // Llama a obtenerPrecio para actualizar el descuento
+  });
+  
+  // Listener de Matriz (fuerza la actualización del motivo de descuento)
+  if(matrizSelect) matrizSelect.addEventListener('change', () => { 
+      if(esSucursalSwitch.checked) {
+          obtenerPrecio(); 
+      }
+  });
+
+  if(precioInput && form) { 
+      precioInput.addEventListener('input', (e) => e.target.value = formatMiles(e.target.value)); 
+      form.addEventListener('submit', () => precioInput.value = unformat(precioInput.value)); 
+  }
+  
+  // Sincronización de fecha de inicio con fecha de pago
+  if(window.jQuery) { 
+      const $fi=$('#fecha_inicio'), $fp=$('#fecha_pago'); 
+      if($fi.length && $fp.length){ 
+          $fi.on('input', function(){ $fp.val($(this).val()); }); 
+          if($fi.val()) $fp.val($fi.val()); 
+      } 
+  }
+
+  // === INIT ===
+  
+  const initialPaqueteValue = '{{ suscripcion.paquete if suscripcion and suscripcion.paquete else "Demo" }}';
+  if (paqueteSelect) paqueteSelect.setAttribute('data-initial-value', initialPaqueteValue);
+
+  // Inicialización de la cadena de eventos (Moneda -> Paquetes -> Vigencia -> Precio/Fechas)
+  actualizarMoneda();
+  cargarPaquetes();
+  sincronizarVigencia(false); 
+  recalcularFechas();
+  obtenerPrecio(); 
+  
+  if(chkFactura && chkFactura.checked) triggerChange(chkFactura);
+  if(metodoPagoSel) triggerChange(metodoPagoSel); 
+  
+  const optsNequi = document.querySelectorAll('#metodo_pago option[data-colombia]');
+  if(optsNequi && paisSelect) { const esCol = (paisSelect.value||'').toUpperCase()==='COLOMBIA'; optsNequi.forEach(o => o.hidden=!esCol); }
+});
+</script>
+{% endblock %}

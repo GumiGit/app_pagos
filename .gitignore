@@ -1,0 +1,17 @@
+Entorno virtual de Python
+
+venv/
+env/
+
+Archivos de caché y compilación
+
+pycache/
+*.pyc
+*.o
+*.so
+
+Bases de datos locales
+
+*.db
+*.sqlite
+database.db

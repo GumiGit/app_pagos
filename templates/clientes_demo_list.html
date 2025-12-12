@@ -1,0 +1,413 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Clientes en Paquete DEMO</h2>
+    </div>
+
+    <div class="card p-4 shadow-sm">
+        <div class="card p-3 mb-3 bg-light">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="filtroPais" class="form-label">Filtrar por País</label>
+                    <select id="filtroPais" class="form-select">
+                        <option value="">Todos los Países</option>
+                        {% for pais in paises %}
+                            <option value="{{ pais }}">{{ pais }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-3 d-flex align-items-end">
+                    <button class="btn btn-secondary w-100" id="btn_reset_filtros">Limpiar Filtros</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-responsive mt-3">
+            <table id="tablaClientesDemo" class="table table-striped table-hover" style="width:100%">
+                <thead class="table-info">
+                    <tr>
+                        <th class="card-header">ID GUMI</th>
+                        <th class="card-header">SERVER</th>
+                        <th class="card-header">PAÍS</th>
+                        <th class="card-header">NEGOCIO</th>
+                        <th class="card-header">CONTACTO</th>
+                        <th class="card-header">TELÉFONOS</th>
+                        <th class="card-header">STATUS</th>
+                        <th class="card-header">VENCE EN</th>
+                        <th class="card-header">ACCIONES</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block custom_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+    // 🛑 DEPENDENCIAS GLOBALES 🛑
+    const getValSafe = (id) => {
+        const el = document.getElementById(id);
+        return (el && el.value !== undefined) ? el.value : '';
+    };
+    const getCheckedSafe = (id) => {
+        const el = document.getElementById(id);
+        return el ? el.checked : false;
+    };
+
+    const ALL_STATUSES = ['Activo', 'Suspendido', 'Eliminado', 'En prueba'];
+    const USER_ROLE = '{{ current_user.role }}';
+    const CAN_MODIFY = USER_ROLE === 'SUPERADMIN' || USER_ROLE === 'ADMIN';
+
+    // ====== Función Modal de Agregar Pago (abrirModalPago) AHORA GLOBAL ======
+    async function abrirModalPago(clienteId, idPago = null, esLectura = false) {
+      if (!CAN_MODIFY && !esLectura) return; // Bloqueo si no puede modificar
+
+      const esEdicion = (idPago !== null);
+      let infoPagoExistente = null;
+      if (esEdicion) {
+          try {
+              const respPago = await fetch(`/api/pago/${idPago}`);
+              const dataPago = await respPago.json();
+              if (dataPago.ok) {
+                  infoPagoExistente = dataPago.data;
+              } else {
+                  Swal.fire('Error', 'No se pudieron cargar los datos del pago.', 'error');
+                  return;
+              }
+          } catch (e) {
+              Swal.fire('Error', 'Error de conexión al cargar el pago.', 'error');
+              return;
+          }
+      }
+
+      const resp = await fetch(`/api/cliente_pago/${clienteId}`);
+      const info = await resp.json();
+
+      if (!info.ok) {
+        Swal.fire('Error', info.error || 'No se pudo cargar la información.', 'error');
+        return;
+      }
+
+      const dt = $.fn.DataTable.isDataTable('#tablaClientesDemo') ? $('#tablaClientesDemo').DataTable() : null;
+
+      const { negocio, paquetes, paquete_id_actual } = info.data;
+      const opcionesPaquete = paquetes.map(p =>
+          `<option value="${p.id}" ${p.id === paquete_id_actual ? 'selected' : ''}>
+            ${p.nombre} – ${p.vigencia} (${p.moneda} ${Number(p.precio).toFixed(2)})
+          </option>`
+      ).join('');
+
+      const { value: formValues } = await Swal.fire({
+        title: esLectura ? `Detalles del Pago Cancelado – ${negocio}` : (esEdicion ? `Editar pago – ${negocio}` : `Agregar pago – ${negocio}`),
+        width: 700,
+        html: ` 
+          <div class="text-start">
+            <label class="form-label mt-2">Fecha de pago *</label>
+            <input type="date" id="fecha_pago" class="form-control" 
+                  value="${infoPagoExistente ? infoPagoExistente.fecha_pago : new Date().toISOString().split('T')[0]}" required>
+
+            <label class="form-label mt-2">Paquete *</label>
+            <select id="paquete" class="form-select">${opcionesPaquete}</select>
+
+            <label class="form-label mt-2">Monto total</label>
+            <input type="text" id="monto" class="form-control text-end" 
+                  value="${infoPagoExistente ? infoPagoExistente.monto_num.toFixed(2) : ''}">
+
+            <label class="form-label mt-2">Método de pago *</label>
+            <select id="metodo_pago" class="form-select">
+              <option value="">— Selecciona —</option>
+              <option value="Transferencia">Transferencia</option>
+              <option value="Depósito">Depósito</option>
+              <option value="Mercado Pago">Mercado Pago</option>
+              <option value="Nequi">Nequi</option>
+              <option value="Otro">Otro</option>
+            </select>
+
+            <div id="campo_otro_metodo" style="display:none;">
+              <label class="form-label mt-2">Especifica método</label>
+              <input type="text" id="otro_metodo_pago" class="form-control" 
+                    value="${infoPagoExistente ? infoPagoExistente.otro_metodo_pago : ''}">
+            </div>
+
+            <label class="form-label mt-2">Motivo del descuento</label>
+            <input type="text" id="motivo_descuento" class="form-control" 
+                  value="${infoPagoExistente ? infoPagoExistente.motivo_descuento : ''}">
+
+            <div class="form-check form-switch mt-3">
+              <input class="form-check-input" type="checkbox" id="factura_pago" 
+                    ${infoPagoExistente && infoPagoExistente.factura_pago ? 'checked' : ''}>
+              <label class="form-label" for="factura_pago">¿Se factura este pago?</label>
+            </div>
+
+            <div id="campo_num_factura" style="display:none;">
+              <label class="form-label mt-2">Número de factura</label>
+              <input type="text" id="numero_factura" class="form-control" 
+                    value="${infoPagoExistente ? infoPagoExistente.numero_factura : ''}">
+            </div>
+            
+          </div>
+            
+        `, 
+        focusConfirm: false,
+        confirmButtonText: esEdicion ? 'Guardar Cambios' : 'Guardar pago',
+        showConfirmButton: !esLectura,
+        showCancelButton: true,
+        cancelButtonText: esLectura ? 'Cerrar' : 'Cancelar',
+        didOpen: () => {
+          const selPaquete = document.getElementById('paquete');
+          const campoMonto = document.getElementById('monto');
+          const selMetodoPago = document.getElementById('metodo_pago');
+          const inputFechaPago = document.getElementById('fecha_pago');
+          const inputFactura = document.getElementById('factura_pago');
+          
+          function actualizarMonto() {
+            if (!esEdicion || !campoMonto.value) { 
+              const selectedId = parseInt(selPaquete.value); 
+              const p = paquetes.find(x => x.id === selectedId); 
+              campoMonto.value = p ? `${p.moneda} ${Number(p.precio).toFixed(2)}` : '';
+            }
+            if (esLectura) {
+              const swalContent = Swal.getHtmlContainer();
+              swalContent.querySelectorAll('input, select, textarea').forEach(el => {
+                el.setAttribute('disabled', 'disabled');
+              });
+            }
+          }
+
+          function actualizarRequeridos() {
+            const p = paquetes.find(x => x.id == selPaquete.value);
+            const esDemo = p && (p.nombre || '').toUpperCase().includes('DEMO');
+            if (esDemo) {
+              if (selMetodoPago) selMetodoPago.removeAttribute('required');
+              if (inputFechaPago) inputFechaPago.removeAttribute('required');
+            } else {
+              if (selMetodoPago) selMetodoPago.setAttribute('required', 'required');
+              if (inputFechaPago) inputFechaPago.setAttribute('required', 'required');
+            }
+          }
+          
+          selPaquete.addEventListener('change', () => {
+            if(esEdicion) campoMonto.value = ''; 
+            actualizarMonto();
+            actualizarRequeridos();
+          });
+          
+          if (esEdicion && infoPagoExistente) {
+            const idPaqueteGuardado = infoPagoExistente.paquete_precio_id_actual;
+            if (idPaqueteGuardado) { selPaquete.value = String(idPaqueteGuardado) }
+            selMetodoPago.value = infoPagoExistente.metodo_pago;
+          } else {
+            selPaquete.value = paquete_id_actual;
+          }
+
+          document.getElementById('metodo_pago').addEventListener('change', (e) => {
+            document.getElementById('campo_otro_metodo').style.display = e.target.value === 'Otro' ? 'block' : 'none';
+          });
+          document.getElementById('factura_pago').addEventListener('change', (e) => {
+            document.getElementById('campo_num_factura').style.display = e.target.checked ? 'block' : 'none';
+          });
+          
+          actualizarMonto();
+          actualizarRequeridos();
+          selMetodoPago.dispatchEvent(new Event('change'));
+          inputFactura.dispatchEvent(new Event('change'));
+        },
+        preConfirm: () => {
+          if (esLectura) return;
+          const fecha_pago = getValSafe('fecha_pago');
+          const paquete_id = getValSafe('paquete'); 
+          const metodo_pago = getValSafe('metodo_pago');
+          const otro_metodo_pago = getValSafe('otro_metodo_pago');
+          const motivo_descuento = getValSafe('motivo_descuento');
+          const numero_factura = getValSafe('numero_factura');
+          const monto = getValSafe('monto');
+          const factura_pago = getCheckedSafe('factura_pago');
+
+          const p = paquetes.find(x => x.id == paquete_id);
+          const esDemo = p && (p.nombre || '').toUpperCase().includes('DEMO');
+
+          if (!paquete_id) { Swal.showValidationMessage('El paquete es obligatorio'); return false; }
+          if (!esDemo) {
+            if (!fecha_pago) { Swal.showValidationMessage('La fecha de pago es obligatoria (para paquetes con costo)'); return false; }
+            if (!metodo_pago) { Swal.showValidationMessage('El método de pago es obligatorio (para paquetes con costo)'); return false; }
+          }
+          
+          // Revisa la variable monto y extrae el número y moneda
+          const monto_match = monto.match(/([A-Z]+)\s*([\d,.]+)/);
+          const monto_num = monto_match ? monto_match[2].replace(/,/g, '') : 0;
+          const moneda = monto_match ? monto_match[1] : null;
+
+          return {
+            fecha_pago, paquete: paquete_id, metodo_pago, otro_metodo_pago, motivo_descuento, factura_pago, numero_factura, monto: monto_num, moneda
+          };
+        }
+      });      
+
+
+      if (esLectura || !formValues) return;
+      if (!formValues) return;
+
+      const url = esEdicion ? `/api/pago/editar/${idPago}` : '/api/pagos/nuevo';
+      const bodyPayload = esEdicion 
+          ? { ...formValues }
+          : { cliente_id: clienteId, ...formValues }; 
+
+      const respPago = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload)
+      });
+
+      const dataPago = await respPago.json();
+      const tituloExito = esEdicion ? 'Pago actualizado' : 'Pago registrado';
+
+      if (dataPago.ok) {
+        await Swal.fire({ icon: 'success', title: tituloExito, showConfirmButton: false, timer: 1600 });
+        
+        if (dt) {
+            dt.ajax.reload(null, false);
+        } else {
+            location.reload(); 
+        }
+      } else {
+        Swal.fire('Error', dataPago.error || 'No se pudo guardar el pago', 'error');
+      }
+    }
+
+
+$(document).ready(function() {
+    
+    let dtClientesDemo;
+    
+    // --- DataTables: Inicialización de la tabla ---
+    dtClientesDemo = $('#tablaClientesDemo').DataTable({
+        ajax: {
+            url: "{{ url_for('api_clientes_demo_dt') }}",
+            dataSrc: 'data'
+        },
+        order: [[1, 'asc']], 
+        // 🛑 AÑADIENDO CONFIGURACIÓN DE LONGITUD 🛑
+        pageLength: 25,
+        lengthMenu: [
+            [10, 25, 50, -1],
+            ['10', '25', '50', 'Todos']
+        ],
+        // 🛑 HABILITANDO EL CONTROL DE LONGITUD CON 'l' 🛑
+        dom: 'lBfrtip', 
+        columns: [
+            { data: 'id_gumi', className: 'text-center' },
+            { data: 'server', className: 'text-center' },
+            { data: 'pais', className: 'text-center' },
+            { 
+                data: 'negocio',
+                render: function(data, type, row) {
+                    const urlDetalle = "{{ url_for('cliente_detalle', cliente_id=0) }}".replace('0', row.id);
+                    return `<a href="${urlDetalle}" class="fw-bold text-primary">${data}</a>`;
+                }
+            },
+            { data: 'nombre_contacto' },
+            { data: 'telefonos_display', className: 'text-start', orderable: false }, 
+            { 
+                data: 'status', 
+                className: 'text-center',
+                render: function(data, type, row) {
+                    const statusActual = data || 'En prueba';
+                    let optionsHtml = '';
+                    
+                    ALL_STATUSES.forEach(status => {
+                        const selected = (status === statusActual) ? 'selected' : '';
+                        optionsHtml += `<option value="${status}" ${selected}>${status}</option>`;
+                    });
+                    
+                    // Solo permitimos el cambio si el usuario puede modificar
+                    const disabledAttr = CAN_MODIFY ? '' : 'disabled';
+
+                    return `<select class="form-select form-select-sm status-changer" data-id="${row.id}" style="width: auto;" ${disabledAttr}>${optionsHtml}</select>`;
+                }
+            },
+            { data: 'vence_en', className: 'text-center' }, 
+            {
+                data: 'id',
+                className: 'text-center',
+                orderable: false,
+                render: function(id) {
+                    // Solo mostramos el botón si el usuario puede modificar
+                    if (!CAN_MODIFY) {
+                        return `<a href="/clientes/${id}/detalle" class="btn btn-sm btn-outline-primary" title="Ver detalles"><i class="fa-solid fa-eye"></i></a>`;
+                    }
+                    return `
+                        <button class="btn btn-sm btn-success btn-agregar-pago" data-id="${id}" title="Registrar Pago">
+                            <i class="fa-solid fa-coins me-1"></i> PAGO
+                        </button>`;
+                }
+            }
+        ],
+        buttons: [
+            { extend: 'excelHtml5', text: '<i class="fa fa-file-excel"></i> Excel', className: 'btn btn-success btn-sm' },
+            { extend: 'csvHtml5', text: '<i class="fa fa-file-csv"></i> CSV', className: 'btn btn-outline-secondary btn-sm' },
+        ],
+        language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/es-MX.json' }
+    });
+
+    // --- Lógica de Filtro por País ---
+    $.fn.dataTable.ext.search.push(
+        function(settings, data, dataIndex) {
+            if (settings.nTable.id !== 'tablaClientesDemo') { return true; }
+
+            const paisFiltro = $('#filtroPais').val();
+            // La columna de País en la tabla es la tercera columna (índice 2, si la cuenta empieza en 0)
+            // Revisa el orden de tus columnas: ID GUMI (0), SERVER (1), PAÍS (2).
+            const paisColumna = dtClientesDemo.cell(dataIndex, 2).data(); 
+
+            if (paisFiltro === "") { return true; }
+            return paisColumna === paisFiltro;
+        }
+    );
+
+    $('#filtroPais').on('change', function() { dtClientesDemo.draw(); });
+    $('#btn_reset_filtros').on('click', function() { $('#filtroPais').val('').trigger('change'); });
+
+    // 🛑 Listener para cambiar Status 🛑
+    $('#tablaClientesDemo').on('change', '.status-changer', async function() {
+        if (!CAN_MODIFY) return; // Bloqueo de seguridad JS
+
+        const select = $(this);
+        const clienteId = select.data('id');
+        const nuevoStatus = select.val();
+        
+        try {
+            const resp = await fetch(`/api/clientes/${clienteId}/status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: nuevoStatus })
+            });
+
+            const data = await resp.json();
+            if (!data.ok) {
+                Swal.fire('Error', 'Error al cambiar status: ' + (data.error || 'Desconocido'), 'error');
+            }
+            dtClientesDemo.ajax.reload(null, false);
+        } catch (e) {
+            Swal.fire('Error', 'Error de conexión al cambiar status.', 'error');
+            dtClientesDemo.ajax.reload(null, false);
+        }
+    });
+
+    // 🛑 Listener para botón Agregar Pago 🛑
+    $('#tablaClientesDemo').on('click', '.btn-agregar-pago', function() {
+        if (!CAN_MODIFY) return; // Bloqueo de seguridad JS
+        const clienteId = $(this).data('id');
+        abrirModalPago(clienteId); 
+    });
+
+}); // CIERRE: document.ready
+</script>
+{% endblock %}

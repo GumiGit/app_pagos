@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-lg p-3">
+                <div class="card-header bg-primary text-white p-3">
+                    <h5 class="mb-0">
+                        <i class="fa-solid fa-file-import me-2"></i> Carga de Estados de Cuenta (CSV)
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Utilice esta herramienta para subir el estado de cuenta bancario en formato CSV. Esto registrará los movimientos como ingresos y egresos pendientes de conciliación.</p>
+                    
+                    <div class="alert alert-info small" role="alert">
+                        <h6>Formato Requerido del CSV:</h6>
+                        <p class="mb-1">El archivo debe contener **exactamente** las siguientes columnas en cualquier orden, y deben estar en MAYÚSCULAS:</p>
+                        <ul class="mb-0">
+                            <li><strong>FECHA</strong> (Ej: 19-11-2025 o 19/11/2025)</li>
+                            <li><strong>CONCEPTO</strong> (Detalle de la transacción)</li>
+                            <li><strong>EGRESO</strong> (Monto de salida, dejar vacío si es ingreso)</li>
+                            <li><strong>INGRESO</strong> (Monto de entrada, dejar vacío si es egreso)</li>
+                            <li><strong>TOTAL</strong> (Saldo final de la cuenta)</li>
+                        </ul>
+                    </div>
+
+                    <form method="POST" enctype="multipart/form-data" action="{{ url_for('conciliacion_importar') }}" class="mt-4">
+                        <div class="mb-3">
+                            <label for="archivo_csv" class="form-label fw-bold">Seleccionar Archivo CSV Bancario:</label>
+                            <input class="form-control" type="file" id="archivo_csv" name="archivo_csv" accept=".csv" required>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-success btn-lg">
+                                <i class="fas fa-upload me-2"></i> Cargar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

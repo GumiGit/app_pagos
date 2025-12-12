@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-lg p-3">
+                <div class="card-header bg-warning text-dark p-3">
+                    <h5 class="mb-0">
+                        <i class="fa-solid fa-file-import me-2"></i> Carga Masiva de Clientes (CSV)
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% if messages %}
+                            <div class="mb-3">
+                                {% for category, message in messages %}
+                                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    {% endwith %}
+
+                    <div class="alert alert-info">
+                        <strong>Importante:</strong> Solo se aceptan archivos **CSV (delimitados por comas)**. 
+                        Asegúrese de que su archivo coincida con el formato de la plantilla.
+                    </div>
+
+                    <form method="POST" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="archivo_csv" class="form-label fw-bold">Seleccionar archivo CSV:</label>
+                            <input class="form-control" type="file" id="archivo_csv" name="archivo_csv" accept=".csv" required>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-success btn-lg">
+                                <i class="fa-solid fa-upload me-2"></i> Cargar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

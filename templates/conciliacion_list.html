@@ -1,0 +1,792 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
+<style>
+.dataTables_wrapper .dt-buttons {
+margin-bottom: 0.5em;
+}
+.select2-container--bootstrap-5 {
+width: 100% !important;
+}
+/* Asegura que el contenido sea legible dentro de la tabla */
+#tablaTransacciones th, #tablaTransacciones td {
+white-space: nowrap; /* Evita que el texto se divida innecesariamente */
+}
+</style>
+
+<div class="container-fluid pt-4">
+<h2 class="mb-4">Conciliación de pagos</h2>
+<a href="{{ url_for('conciliacion_importar') }}">
+<i class="fas fa-file-upload me-1"></i> Cargar Nuevo CSV
+</a>
+<hr class="my-4">
+
+<!-- Filtros de Mes y Año -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <label for="filtroAnio" class="form-label">Filtrar por Año</label>
+        <select id="filtroAnio" class="form-select">
+            <option value="">Todos</option>
+            {% for year in unique_years %}
+                <option value="{{ year }}" {% if year == now.year %}selected{% endif %}>{{ year }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label for="filtroMes" class="form-label">Filtrar por Mes</label>
+        <select id="filtroMes" class="form-select">
+            <option value="">Todos</option>
+            {% for num, name in months_map.items() %}
+                <option value="{{ num }}">{{ name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+        <button id="aplicarFiltros" class="btn btn-primary w-100">Aplicar Filtros</button>
+    </div>
+</div>
+
+<!-- Tabla de Transacciones -->
+<div class="card shadow mb-4">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped table-hover align-middle" id="tablaTransacciones" width="100%" cellspacing="0">
+                <thead>
+                    <tr>
+                        <!-- Columnas VISIBLES (10) -->
+                        <th class="text-center card-header">ID</th>          <!-- Col 1 (Index 0) -->
+                        <th class="text-center card-header">FECHA</th>       <!-- Col 2 (Index 1) -->
+                        <th class="text-center card-header">CONCEPTO</th>                        <!-- Col 3 (Index 2) -->
+                        <th class="d-none">EGRESO</th>          <!-- Col 4 (Index 3 - Oculto) -->
+                        <th class="text-center card-header">INGRESO</th>     <!-- Col 5 (Index 4) -->
+                        <th class="d-none">TOTAL</th>           <!-- Col 6 (Index 5 - Oculto) -->
+                        <th class="text-center card-header">STATUS</th>     <!-- Col 7 (Index 6) -->
+                        <th class="text-center card-header"># FACTURA</th>   <!-- Col 8 (Index 7) -->
+                        <th class="text-center card-header">NEGOCIO</th>   <!-- Col 9 (Index 8) - ESTA ES LA COLUMNA NUEVA VISIBLE -->
+                        <th class="text-center card-header">ACCIONES</th>    <!-- Col 10 (Index 9) - Se movió de Index 8 -->
+                        <!-- Columna FANTASMA para Exportación (1) -->
+                        <th class="d-none">RFC/NIT</th>            <!-- Col 11 (Index 10) - Se movió de Index 10 -->
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- DataTables llenará este cuerpo -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+
+</div>
+
+<!-- ============================================== -->
+
+<!-- MODAL DE CONCILIACIÓN CLÁSICA (UN PAGO) -->
+
+<!-- ============================================== -->
+
+<div class="modal fade" id="modalConciliacion" tabindex="-1" aria-labelledby="modalConciliacionLabel" aria-hidden="true">
+<div class="modal-dialog modal-lg">
+<div class="modal-content">
+<div class="modal-header bg-primary text-white">
+<h5 class="modal-title" id="modalConciliacionTitle"><i class="fas fa-link me-2"></i> Conciliar Pago</h5>
+<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+<div class="modal-body">
+<form id="conciliacionForm" method="POST">
+<!-- Datos ocultos de la Transacción Bancaria -->
+<input type="hidden" id="bank_transaction_id" name="bank_transaction_id">
+<input type="hidden" id="pago_id_existente" name="pago_id_existente">
+
+                <div class="row">
+                    <!-- Columna de Datos Bancarios -->
+                    <div class="col-md-5 border-end">
+                        <h6 class="text-primary mb-3">Detalle de la Transacción Bancaria</h6>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold small">Fecha Banco</label>
+                            <input type="text" class="form-control-plaintext" id="fecha_banco_display" readonly>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold small">Monto (Ingreso)</label>
+                            <input type="text" class="form-control-plaintext text-success fw-bold fs-5" id="monto_banco_display" readonly>
+                            <input type="hidden" id="monto_pago" name="monto_pago">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold small">Concepto Banco</label>
+                            <textarea class="form-control-plaintext small" id="concepto_banco" rows="3" readonly></textarea>
+                        </div>
+                    </div>
+                    
+                    <!-- Columna de Datos de Conciliación -->
+                    <div class="col-md-7">
+                        <h6 class="text-danger mb-3">Datos del Pago Gumi (Requerido)</h6>
+                        
+                        <div class="mb-3">
+                            <label for="cliente_id" class="form-label fw-bold">1. Buscar Cliente (Negocio o Email)</label>
+                            <select class="form-select" id="cliente_id" name="cliente_id" required>
+                                <option value="">Buscar cliente...</option>
+                            </select>
+                            <div class="form-text">Cliente seleccionado: <span id="cliente_info" class="fw-bold">N/A</span></div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="fecha_pago" class="form-label fw-bold">2. Fecha del Pago (DD-MM-YYYY)</label>
+                            <input type="text" class="form-control" id="fecha_pago" name="fecha_pago" placeholder="Ej: 01-12-2025" required>
+                            <div class="form-text">Esta fecha será la base para calcular la nueva vigencia.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="paquete_id" class="form-label fw-bold">3. Paquete Conciliado</label>
+                            <select class="form-select" id="paquete_id" name="paquete_id" required disabled>
+                                <option value="">Seleccione el paquete...</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="numero_factura" class="form-label fw-bold">4. Número de Factura (Opcional)</label>
+                            <input type="text" class="form-control" id="numero_factura" name="numero_factura">
+                        </div>
+                    </div>
+                </div>
+
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-primary" form="conciliacionForm" id="btnConfirmarConciliacion">
+                <i class="fas fa-check-circle me-1"></i> Conciliar y Registrar Pago
+            </button>
+        </div>
+    </div>
+</div>
+
+
+</div>
+
+<!-- ============================================== -->
+
+<!-- NUEVO MODAL: PRE-CONCILIACIÓN SUCURSAL -->
+
+<!-- ============================================== -->
+
+<div class="modal fade" id="modalSucursal" tabindex="-1" aria-labelledby="modalSucursalLabel" aria-hidden="true">
+<div class="modal-dialog modal-lg">
+<div class="modal-content">
+<div class="modal-header bg-info text-white">
+<h5 class="modal-title" id="modalSucursalTitle"><i class="fas fa-code-branch me-2"></i> Pre-Conciliación (Sucursales)</h5>
+<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+<div class="modal-body">
+<form id="sucursalForm" method="POST">
+<input type="hidden" id="sucursal_bank_transaction_id" name="bank_transaction_id">
+
+                <div class="row">
+                    <!-- Columna de Datos Bancarios (Display) -->
+                    <div class="col-md-5 border-end">
+                        <h6 class="text-info mb-3">Detalle de la Transacción Bancaria</h6>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold small">Monto (Ingreso)</label>
+                            <input type="text" class="form-control-plaintext text-success fw-bold fs-5" id="sucursal_monto_display" readonly>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold small">Concepto Banco</label>
+                            <textarea class="form-control-plaintext small" id="sucursal_concepto_banco" rows="3" readonly></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Columna de Datos de Sucursal -->
+                    <div class="col-md-7">
+                        <h6 class="text-danger mb-3">Datos de Asignación (Múltiples Negocios)</h6>
+                        
+                        <div class="mb-3">
+                            <label for="sucursal_clientes_id" class="form-label fw-bold">1. Seleccionar Sucursales/Negocios</label>
+                            <select class="form-select" id="sucursal_clientes_id" name="sucursal_clientes_id" multiple="multiple" required>
+                                <!-- Options cargadas por Select2 AJAX -->
+                            </select>
+                            <div class="form-text">Selecciona uno o más clientes que pagaron con este monto total.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="sucursal_numero_factura" class="form-label fw-bold">2. Número de Factura (Opcional)</label>
+                            <input type="text" class="form-control" id="sucursal_numero_factura" name="numero_factura">
+                            <div class="form-text">El Status cambiará de PENDIENTE a PRE-CONCILIADO (Sucursal).</div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-info text-white" form="sucursalForm" id="btnConfirmarSucursal">
+                <i class="fas fa-save me-1"></i> Pre-Conciliar
+            </button>
+        </div>
+    </div>
+</div>
+
+
+</div>
+
+{% endblock %}
+{% block custom_scripts %}
+
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<script src="https://cdn.datatables.net/buttons/2.3.6/js/dataTables.buttons.min.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script src="https://cdn.datatables.net/buttons/2.3.6/js/buttons.html5.min.js"></script>
+
+<script src="https://cdn.datatables.net/buttons/2.3.6/js/buttons.print.min.js"></script>
+
+<script>
+let dtTransacciones;
+let clientePais;
+// Instancias de los elementos HTML del modal
+const conciliacionModalElement = document.getElementById('modalConciliacion');
+const sucursalModalElement = document.getElementById('modalSucursal');
+
+// Variables para almacenar las instancias Bootstrap del modal (Inicializadas en ready)
+let conciliacionModalInstance;
+let sucursalModalInstance;
+
+// Variable de JavaScript para la URL base de la API de Pre-conciliación
+const PRE_CONCILIAR_URL_BASE = '/api/transaccion/preconciliar_sucursal/';
+
+// 🛑 INICIO DE INYECCIÓN DE VARIABLES DESDE PYTHON (app.py) 🛑
+// Estas URLs ya son strings finales y seguros.
+const API_TRANSACCIONES_URL = '{{ url_transacciones }}';
+const API_CLIENTES_SEARCH_URL = '{{ url_clientes_search }}';
+const API_CLIENTE_PAGO_BASE_URL = '{{ url_cliente_pago_base }}';
+const API_PAQUETES_URL = '{{ url_paquetes }}';
+const PAGO_REGISTRAR_URL = '{{ url_pago_registrar }}';
+// 🛑 FIN DE INYECCIÓN DE VARIABLES 🛑
+
+// ----------------------------------------------------
+// FIX CRÍTICO DE FOCO (Para Select2 en Modales)
+// ----------------------------------------------------
+if ($.fn.modal) {
+    $.fn.modal.Constructor.prototype.enforceFocus = function() {};
+}
+
+$(document).ready(function() {
+
+// CRÍTICO: Inicializar las instancias de Bootstrap Modal aquí.
+conciliacionModalInstance = new bootstrap.Modal(conciliacionModalElement);
+sucursalModalInstance = new bootstrap.Modal(sucursalModalElement);
+
+// Función de formato de moneda (simplificada para JS)
+function formatCurrencyJS(value, moneda = 'MXN') {
+    if (value === null || value === undefined || isNaN(value)) return `${moneda} 0.00`;
+    const num = parseFloat(value);
+    if (isNaN(num)) return `${moneda} 0.00`;
+    
+    return new Intl.NumberFormat('es-MX', {
+        style: 'currency',
+        currency: moneda,
+        minimumFractionDigits: 2,
+    }).format(num);
+}
+
+// Función auxiliar para formatear números en las exportaciones
+const formatNumberForExport = function(data) {
+    if (data === null || data === undefined || data === '') {
+        return '';
+    }
+    
+    const num = parseFloat(data);
+    
+    // CORRECCIÓN CRÍTICA: Reemplazar &amp;&amp; por &&
+    if (!isNaN(num) && num !== 0) {
+        return num.toLocaleString('es-MX', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+    
+    if (num === 0) {
+         return '0.00';
+    }
+    
+    return data;
+};
+
+
+
+// ==========================================
+// 1. INICIALIZACIÓN DE DATATABLES
+// ==========================================
+dtTransacciones = $('#tablaTransacciones').DataTable({
+    ajax: { 
+        // 🛑 USAMOS LA VARIABLE DE PYTHON 🛑
+        url: API_TRANSACCIONES_URL,
+        data: function(d) {
+            d.year = $('#filtroAnio').val();
+            d.month = $('#filtroMes').val();
+        },
+        dataSrc: 'data'
+    },
+    columns: [
+        // 1. ID Banco (Index 0)
+        { data: 'id', width: '8%', className: 'text-center' },
+        // 2. Fecha (Index 1)
+        { data: 'fecha_banco', width: '10%', className: 'text-center' },
+        // 3. Concepto (Index 2)
+        { data: 'concepto', width: '25%' },
+        
+        // 4. EGRESO (Index 3 - Oculto) - Usamos el valor numérico como fuente
+        { data: 'egreso_num', defaultContent: 0, visible: false, exportable: true },
+        
+        // 5. INGRESO (Index 4)
+        { data: 'ingreso_str', defaultContent: formatCurrencyJS(0), width: '10%', className: 'text-end fw-bold text-success' },
+        
+        // 6. TOTAL (Index 5 - Oculto) - Usamos el valor numérico como fuente
+        { data: 'total_num', defaultContent: 0, visible: false, exportable: true },
+        
+        // 7. ESTATUS (Index 6)
+        { 
+            data: 'status', 
+            width: '10%', 
+            className: 'text-center', 
+            render: function(data) { 
+                let class_ = 'bg-warning';
+                let text = 'Pendiente';
+                if (data === 'CONCILIADO') {
+                    class_ = 'bg-success';
+                    text = 'Conciliado';
+                } else if (data === 'PRE-CONCILIADO (Sucursal)') {
+                    class_ = 'bg-info text-white';
+                    text = 'PRE-CONCILIADO (Sucursal)';
+                }
+                return `<span class="badge ${class_}">${text}</span>`; 
+            } 
+        },
+        
+        // 8. NÚMERO DE FACTURA (Index 7) - VISIBLE
+        { 
+            data: 'num_factura_conciliado', 
+            width: '10%', 
+            className: 'text-center small',
+            render: function(data, type, row) {
+                if (data) {
+                    return data;
+                }
+                return '—';
+            }
+        },
+        
+        // 9. NEGOCIO CONCILIADO (Index 8) - VISIBLE
+        { 
+            data: 'negocio_conciliado', 
+            width: '15%', 
+            className: 'text-start small',
+            visible: true, 
+            exportable: true, 
+            searchable: true, 
+            defaultContent: '—' 
+        },
+        
+        // 10. ACCIONES (Index 9)
+        { 
+            data: null,
+            width: '20%',
+            render: function(data, type, row) {
+                if (type === 'display') {
+                    let html = '';
+                    const is_ingreso = row.ingreso_num > 0;
+                    const monto_base = is_ingreso ? row.ingreso_num : row.egreso_num;
+                    
+                    // Estado actual para botones
+                    const is_conciliated = row.status === 'CONCILIADO';
+                    const is_preconciliated = row.status === 'PRE-CONCILIADO (Sucursal)';
+                    
+                    if (is_ingreso) { 
+                        // Botón CONCILIAR/RECONCILIAR
+                        const action_class = is_conciliated ? 'btn-warning btn-reconciliar' : 'btn-primary btn-conciliar';
+                        const action_text = is_conciliated ? 'Reconciliar' : 'Conciliar';
+                        
+                        // Botón SUCURSAL
+                        const sucursal_class = is_preconciliated ? 'btn-secondary' : 'btn-info text-white';
+                        const sucursal_text = is_preconciliated ? 'Ver Sucursales' : 'Sucursal';
+
+
+                        html += `<button class="btn btn-sm ${action_class} me-1" data-id="${row.id}" data-monto="${monto_base}" data-concepto="${row.concepto}" data-fecha="${row.fecha_banco}" data-pago-id="${row.pago_id || 0}"><i class="fas fa-link"></i> ${action_text}</button>`;
+                        
+                        // Nuevo botón SUCURSAL
+                        html += `<button class="btn btn-sm ${sucursal_class} btn-sucursal me-1" data-id="${row.id}" data-monto="${monto_base}" data-concepto="${row.concepto}" data-negocios="${row.negocio_conciliado || ''}" data-factura="${row.num_factura_conciliado || ''}">
+                            <i class="fas fa-code-branch"></i> ${sucursal_text}
+                        </button>`;
+                    } else {
+                         html += `<span class="badge bg-secondary">Egreso</span>`;
+                    }
+
+                    html += `<button class="btn btn-sm btn-danger btn-eliminar" data-id="${row.id}" title="Eliminar Transacción y Pago Asociado"><i class="fas fa-trash"></i></button>`;
+                    return html;
+                }
+                return ''; 
+            },
+            orderable: false,
+            searchable: false,
+            className: 'text-center'
+        },
+        
+        // 11. Columna fantasma 2 (Index 10 - Oculto: RFC/NIT)
+        { data: 'rfc_nit_conciliado', visible: false, exportable: true, searchable: false, defaultContent: '' },
+
+    ],
+
+    dom: 'lBfrtip', 
+    buttons: [
+        // ... (Tus definiciones de botones de DataTables sin cambios) ...
+        { 
+            extend: 'excel', 
+            text: '<i class="fas fa-file-excel me-1"></i> Excel', 
+            exportOptions: { 
+                columns: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10], 
+                format: {
+                    body: function (data, rowIdx, columnIdx, node) {
+                        if (columnIdx === 3 || columnIdx === 5) {
+                            return formatNumberForExport(data);
+                        }
+                        return data; 
+                    }
+                }
+            } 
+        },
+        
+        // Exportar a CSV (limpio para lectura de software)
+        { 
+            extend: 'csv', 
+            text: '<i class="fas fa-file-csv me-1"></i> CSV', 
+            exportOptions: { 
+                columns: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10], 
+                format: {
+                    body: function (data, rowIdx, columnIdx, node) {
+                        if (columnIdx === 3 || columnIdx === 5) {
+                            const num = parseFloat(data);
+                            return !isNaN(num) ? num.toFixed(2) : ''; 
+                        }
+                        return data;
+                    }
+                }
+            } 
+        },
+        
+        // Copiar
+        { 
+            extend: 'copy', 
+            text: '<i class="fas fa-copy me-1"></i> Copiar', 
+            exportOptions: { 
+                columns: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10],
+                format: {
+                    body: function (data, rowIdx, columnIdx, node) {
+                        if (columnIdx === 3 || columnIdx === 5) {
+                            return formatNumberForExport(data);
+                        }
+                        return data;
+                    }
+                }
+            } 
+        },
+        
+        // Imprimir
+        { 
+            extend: 'print', 
+            text: '<i class="fas fa-print me-1"></i> Imprimir', 
+            exportOptions: { 
+                columns: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10],
+                format: {
+                    body: function (data, rowIdx, columnIdx, node) {
+                        if (columnIdx === 3 || columnIdx === 5) {
+                            return formatNumberForExport(data);
+                        }
+                        return data;
+                    }
+                }
+            } 
+        }
+    ],
+    order: [[1, 'desc']],
+    responsive: true,
+    pageLength: 10,
+});
+
+// ==========================================
+// 2. INICIALIZACIÓN DE SELECT2
+// ==========================================
+
+// Select2 Clientes (Búsqueda AJAX) para Conciliación Clásica
+const $selectClientes = $('#cliente_id');
+$selectClientes.select2({
+    theme: "bootstrap-5",
+    placeholder: 'Escribe el nombre, contacto o email del cliente (mín. 3 letras)...',
+    dropdownParent: $('#modalConciliacion'),
+    minimumInputLength: 3,
+    ajax: {
+        // 🛑 USAMOS LA VARIABLE DE PYTHON 🛑
+        url: API_CLIENTES_SEARCH_URL,
+        dataType: 'json',
+        delay: 250,
+        data: function (params) {
+            return { q: params.term };
+        },
+        processResults: function (data) {
+            return data; 
+        },
+        cache: true
+    }
+}).on('select2:select', function (e) {
+    const data = e.params.data;
+    $('#cliente_info').text(data.text);
+    $('#paquete_id').prop('disabled', true).empty().append('<option value="">Cargando paquetes...</option>');
+    
+    // 🛑 USAMOS LA VARIABLE BASE Y REEMPLAZAMOS EL MARCADOR 🛑
+    $.ajax({
+        url: API_CLIENTE_PAGO_BASE_URL.replace('0', data.id),
+        method: 'GET',
+        success: function(res) {
+            clientePais = res.data.pais || 'MÉXICO';
+            cargarPaquetes(clientePais);
+        },
+        error: function() {
+            clientePais = 'MÉXICO';
+            cargarPaquetes(clientePais);
+        }
+    });
+});
+
+// Select2 Clientes (Búsqueda AJAX) para Múltiples Sucursales
+const $selectSucursales = $('#sucursal_clientes_id');
+$selectSucursales.select2({
+    theme: "bootstrap-5",
+    placeholder: 'Escribe el nombre de los negocios (mín. 3 letras)...',
+    dropdownParent: $('#modalSucursal'),
+    multiple: true, // CRÍTICO: Habilitar selección múltiple
+    minimumInputLength: 3,
+    ajax: $selectClientes.data('select2').options.get('ajax') // Reutilizar la misma configuración AJAX
+});
+
+// Select2 Paquetes (Estático/AJAX filtrado)
+const $selectPaquetes = $('#paquete_id');
+$selectPaquetes.select2({
+    theme: "bootstrap-5",
+    placeholder: "Seleccione un paquete",
+    allowClear: false,
+    dropdownParent: $('#modalConciliacion') 
+});
+
+// Cargar paquetes para el país del cliente seleccionado
+function cargarPaquetes(pais) {
+    $selectPaquetes.empty().append('<option value="">Seleccione el paquete...</option>');
+    $.ajax({
+        // 🛑 USAMOS LA VARIABLE DE PYTHON 🛑
+        url: API_PAQUETES_URL,
+        data: { country: pais },
+        dataType: 'json',
+        success: function(response) {
+            // CORRECCIÓN CRÍTICA: Reemplazar &amp;&amp; por &&
+            if (response.ok && response.paquetes.length > 0) {
+                $.each(response.paquetes, function(i, paquete) {
+                    $selectPaquetes.append($('<option>', {
+                        value: paquete.id,
+                        text: paquete.text,
+                        'data-precio': paquete.precio
+                    }));
+                });
+                $selectPaquetes.prop('disabled', false);
+            } else {
+                $selectPaquetes.append('<option value="" disabled>No hay paquetes para este país.</option>');
+                $selectPaquetes.prop('disabled', true);
+            }
+        },
+        error: function() {
+            Swal.fire('Error', 'No se pudieron cargar los paquetes del país.', 'error');
+        }
+    });
+}
+
+
+
+// ==========================================
+// 3. HANDLERS DE MODAL Y BOTONES
+// ==========================================
+
+// Evento para aplicar filtros
+$('#aplicarFiltros').on('click', function() {
+    dtTransacciones.ajax.reload(null, false);
+});
+
+// Mostrar modal CLÁSICO (Conciliar/Reconciliar)
+$('#tablaTransacciones tbody').on('click', '.btn-conciliar, .btn-reconciliar', function() {
+    const transId = $(this).data('id');
+    const monto = $(this).data('monto');
+    const fecha_str = $(this).data('fecha');
+    const concepto = $(this).data('concepto');
+    const pagoId = $(this).data('pago-id'); 
+    
+    // 1. Limpiar y establecer datos base
+    $('#conciliacionForm')[0].reset();
+    // 🛑 USAMOS LA VARIABLE DE PYTHON 🛑
+    $('#conciliacionForm').attr('action', PAGO_REGISTRAR_URL);
+    
+    // Datos de la Transacción Bancaria
+    $('#modalConciliacionTitle').text(pagoId && pagoId > 0 ? 'Reconciliar Pago' : 'Conciliar Pago');
+    $('#bank_transaction_id').val(transId);
+    $('#fecha_banco_display').val(fecha_str);
+    $('#monto_banco_display').val(formatCurrencyJS(monto));
+    $('#monto_pago').val(monto); 
+    $('#concepto_banco').val(concepto);
+    
+    // Datos del Pago Gumi
+    $('#fecha_pago').val(fecha_str); 
+
+    $selectClientes.val(null).trigger('change');
+    $selectPaquetes.val(null).prop('disabled', true).trigger('change');
+    $('#cliente_info').text('N/A');
+
+    conciliacionModalInstance.show();
+});
+
+// NUEVO HANDLER: Mostrar modal SUCURSAL
+$('#tablaTransacciones tbody').on('click', '.btn-sucursal', function() {
+    const transId = $(this).data('id');
+    const monto = $(this).data('monto');
+    const concepto = $(this).data('concepto');
+    const negociosConciliados = $(this).data('negocios'); 
+    const numFactura = $(this).data('factura');
+
+    // 1. Limpiar y establecer datos base
+    $('#sucursalForm')[0].reset();
+    $('#sucursal_bank_transaction_id').val(transId);
+    
+    // Datos de la Transacción Bancaria
+    $('#sucursal_monto_display').val(formatCurrencyJS(monto));
+    $('#sucursal_concepto_banco').val(concepto);
+    
+    // Datos de Sucursales
+    $('#sucursal_numero_factura').val(numFactura);
+    
+    // CRÍTICO: Limpiar Select2 Múltiple y rellenar si es necesario.
+    $selectSucursales.empty().val(null).trigger('change');
+    
+
+    if ($(this).hasClass('btn-secondary')) {
+         $('#modalSucursalTitle').text('Detalle de Pre-Conciliación (Sucursales)');
+    } else {
+         $('#modalSucursalTitle').text('Pre-Conciliación (Sucursales)');
+    }
+    
+    sucursalModalInstance.show();
+});
+
+// 4. ELIMINAR TRANSACCIÓN BANCARIA
+$('#tablaTransacciones tbody').on('click', '.btn-eliminar', function() {
+    const transId = $(this).data('id');
+
+    Swal.fire({
+        title: '¿Estás seguro?',
+        text: "¡No podrás revertir esto! La transacción y cualquier pago asociado (si existiera) serán eliminados.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    }).then((result) => {
+        // CORRECCIÓN CRÍTICA: Reemplazar &amp;&amp; por &&
+        if (result.isConfirmed) {
+            $.ajax({
+                url: `/api/transaccion/eliminar/${transId}`,
+                method: 'DELETE',
+                success: function(response) {
+                    Swal.fire('Eliminado', response.message, 'success');
+                    dtTransacciones.ajax.reload(null, false);
+                },
+                error: function(xhr) {
+                    // CORRECCIÓN CRÍTICA: Reemplazar &amp;&amp; por &&
+                    const errorMsg = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Error al intentar eliminar la transacción.';
+                    Swal.fire('Error', errorMsg, 'error');
+                }
+            });
+        }
+    });
+});
+
+// 5. ENVÍO DEL FORMULARIO DE CONCILIACIÓN CLÁSICA
+$('#conciliacionForm').on('submit', function(e) {
+    e.preventDefault();
+    
+    const data = new FormData(this);
+    const url = $('#conciliacionForm').attr('action');
+    
+    $.ajax({
+        url: url,
+        method: 'POST',
+        data: data,
+        processData: false, 
+        contentType: false, 
+        success: function(response) {
+            conciliacionModalInstance.hide(); 
+            Swal.fire('Éxito', response.message, 'success');
+            dtTransacciones.ajax.reload(null, false); 
+        },
+        error: function(xhr) {
+            // CORRECCIÓN CRÍTICA: Reemplazar &amp;&amp; por &&
+            const errorMsg = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Error desconocido al conciliar/actualizar el pago.';
+            Swal.fire('Error', errorMsg, 'error');
+        }
+    });
+});
+
+// NUEVO HANDLER: ENVÍO DEL FORMULARIO DE SUCURSAL (PRE-CONCILIACIÓN)
+$('#sucursalForm').on('submit', function(e) {
+    e.preventDefault();
+    
+    const transId = $('#sucursal_bank_transaction_id').val();
+    const factura = $('#sucursal_numero_factura').val();
+    
+    // Obtener el texto de los clientes seleccionados (para guardar en la columna negocio_conciliado)
+    const selectedOptions = $selectSucursales.select2('data');
+    // Queremos una cadena con los nombres de negocio separados por coma
+    const negociosStr = selectedOptions.map(option => option.text).join(', '); 
+    
+    // Obtener los IDs de los clientes seleccionados (opcional, para el backend)
+    const clienteIds = $selectSucursales.val();
+
+    // La URL se construye aquí en JavaScript, utilizando el ID de la transacción
+    const url = PRE_CONCILIAR_URL_BASE + transId; // /api/transaccion/preconciliar_sucursal/ID
+    
+    // Payload para el backend
+    const payload = {
+        cliente_ids: clienteIds, // IDs numéricos/strings
+        negocios_nombres: negociosStr, // Cadena de nombres (para exportación)
+        numero_factura: factura
+    };
+
+    $.ajax({
+        url: url,
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(payload), 
+        success: function(response) {
+            sucursalModalInstance.hide(); 
+            Swal.fire('Éxito', response.message, 'success');
+            dtTransacciones.ajax.reload(null, false); 
+        },
+        error: function(xhr) {
+            // CORRECCIÓN CRÍTICA: Reemplazar &amp;&amp; por &&
+            const errorMsg = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Error desconocido al pre-conciliar la sucursal.';
+            Swal.fire('Error', errorMsg, 'error');
+        }
+    });
+});
+
+
+});
+</script>
+
+{% endblock %}

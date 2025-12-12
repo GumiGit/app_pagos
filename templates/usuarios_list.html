@@ -1,0 +1,265 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-4 shadow-sm p-3">
+                <div class="card-header pb-0 d-flex justify-content-between align-items-center bg-white mb-5">
+                    <h5 class="mb-0">
+                        Gestión de Usuarios
+                    </h5>
+                    <button class="btn btn-sm btn-primary mb-3" id="btnNuevoUsuario">
+                        <i class="fa-solid fa-user-plus me-1"></i> Crear Nuevo Usuario
+                    </button>
+                </div>
+                <div class="card-body px-0 pt-0 pb-2">
+                    <div class="table-responsive p-1">
+                        <table class="table align-items-center mb-0" id="tablaUsuarios">
+                            <thead>
+                                <tr>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 ps-3 card-header">ID</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">Nombre Completo</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">Usuario</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">Mail</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 card-header">Rol</th>
+                                    <th class="text-secondary opacity-7 text-center card-header">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- DataTables carga aquí -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+<!-- SweetAlert2 y scripts -->
+{% block custom_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+    let dtUsuarios;
+    
+    const ROLES = ['SUPERADMIN', 'ADMIN', 'LECTOR'];
+    
+    // Función para generar las opciones del select de rol
+    function getRoleOptions(currentRole) {
+        let options = '';
+        ROLES.forEach(role => {
+            options += `<option value="${role}" ${role === currentRole ? 'selected' : ''}>${role}</option>`;
+        });
+        return options;
+    }
+
+    // Función para mostrar el modal de creación/edición
+    async function showUsuarioModal(data = null) {
+        const isEdit = data !== null;
+        const id = isEdit ? data.id : null;
+        const title = isEdit ? 'Editar Usuario' : 'Crear Nuevo Usuario';
+        
+        const currentRole = isEdit ? data.role : 'LECTOR';
+        const isSelf = isEdit && id === {{ current_user.id }};
+
+        const htmlContent = `
+            <div class="text-start">
+                <label class="form-label mt-2">Nombre Completo *</label>
+                <input type="text" id="swal-full_name" class="form-control" value="${isEdit ? (data.full_name || '') : ''}" required>
+                
+                <label class="form-label mt-3">Mail</label>
+                <input type="email" id="swal-email" class="form-control" value="${isEdit ? (data.email || '') : ''}">
+
+                <label class="form-label mt-3">Nombre de Usuario *</label>
+                <input type="text" id="swal-username" class="form-control" value="${isEdit ? (data.username || '') : ''}" required>
+
+                <label class="form-label mt-3">Rol *</label>
+                <select id="swal-role" class="form-select">
+                    ${getRoleOptions(currentRole)}
+                </select>
+                ${isSelf ? '<p class="text-danger small mt-1">No puedes cambiar tu propio rol en edición.</p>' : ''}
+                
+                <label class="form-label mt-3">${isEdit ? 'Nueva Contraseña (Dejar vacío para no cambiar)' : 'Contraseña *'}</label>
+                <input type="password" id="swal-password" class="form-control" ${isEdit ? '' : 'required'}>
+                
+                <label class="form-label mt-3">Confirmar Contraseña ${isEdit ? '' : '*'}</label>
+                <input type="password" id="swal-confirm-password" class="form-control" ${isEdit ? '' : ''}>
+            </div>
+        `;
+
+        const { value: formValues } = await Swal.fire({
+            title: title,
+            html: htmlContent,
+            focusConfirm: false,
+            width: '600px',
+            confirmButtonText: isEdit ? 'Guardar Cambios' : 'Crear Usuario',
+            showCancelButton: true,
+            didOpen: () => {
+                 if (isSelf) {
+                     document.getElementById('swal-role').disabled = true;
+                 }
+            },
+            preConfirm: () => {
+                const username = document.getElementById('swal-username').value.trim();
+                const full_name = document.getElementById('swal-full_name').value.trim();
+                const email = document.getElementById('swal-email').value.trim();
+                const role = document.getElementById('swal-role').value;
+                const password = document.getElementById('swal-password').value;
+                const confirmPassword = document.getElementById('swal-confirm-password').value;
+
+                if (!username || !full_name) {
+                    Swal.showValidationMessage('Nombre Completo y Usuario son obligatorios.');
+                    return false;
+                }
+                
+                if (!isEdit && !password) {
+                     Swal.showValidationMessage('La Contraseña es obligatoria para nuevos usuarios.');
+                    return false;
+                }
+                
+                if (password && password !== confirmPassword) {
+                    Swal.showValidationMessage('Las contraseñas no coinciden.');
+                    return false;
+                }
+                
+                const dataToSend = { username, full_name, email, role };
+                if (password) {
+                    dataToSend.password = password;
+                }
+                // Si es auto-edición, enviamos el rol original (porque lo deshabilitamos en el HTML)
+                if (isSelf) {
+                    dataToSend.role = currentRole;
+                }
+                
+                return dataToSend;
+            }
+        });
+
+        if (!formValues) return;
+
+        // Enviar datos al backend
+        const url = isEdit ? `/api/usuarios/editar/${id}` : '/api/usuarios/nuevo';
+        const method = 'POST';
+
+        try {
+            const resp = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formValues)
+            });
+            const json = await resp.json();
+
+            if (json.ok) {
+                Swal.fire({ 
+                    icon: 'success', 
+                    title: json.msg || 'Usuario guardado', 
+                    timer: 3000, 
+                    showConfirmButton: false 
+                });
+                dtUsuarios.ajax.reload(null, false);
+            } else {
+                Swal.fire('Error', json.error || 'No se pudo guardar.', 'error');
+            }
+        } catch (e) {
+            Swal.fire('Error', 'Error de conexión con el servidor.', 'error');
+        }
+    }
+    
+    async function eliminarUsuario(id) {
+        const result = await Swal.fire({
+            title: '¿Estás seguro?',
+            text: "No podrás revertir la eliminación de este usuario. Debe haber al menos un usuario restante.",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Sí, eliminar',
+            cancelButtonText: 'Cancelar'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                const resp = await fetch(`/api/usuarios/eliminar/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                const json = await resp.json();
+
+                if (json.ok) {
+                    Swal.fire('Eliminado!', json.msg || 'El usuario ha sido eliminado.', 'success');
+                    dtUsuarios.ajax.reload(null, false);
+                } else {
+                    Swal.fire('Error', json.error || 'No se pudo eliminar.', 'error');
+                }
+            } catch (e) {
+                Swal.fire('Error', 'Error de conexión con el servidor.', 'error');
+            }
+        }
+    }
+
+
+    $(document).ready(function() {
+        // Inicialización de DataTables
+        dtUsuarios = $('#tablaUsuarios').DataTable({
+            ajax: {
+                url: '/api/usuarios_dt',
+                dataSrc: 'data'
+            },
+            rowId: 'row-{id}',
+            order: [[0, 'asc']],
+            pageLength: 10,
+            columns: [
+                { data: 'id', width: '50px' },
+                { data: 'full_name' }, // Nuevo
+                { data: 'username' },
+                { data: 'email' },      // Nuevo
+                { 
+                    data: 'role',        // Nuevo
+                    render: function(role) {
+                        let badgeClass = 'bg-secondary';
+                        if (role === 'SUPERADMIN') badgeClass = 'bg-primary';
+                        else if (role === 'ADMIN') badgeClass = 'bg-info text-dark';
+                        else if (role === 'LECTOR') badgeClass = 'bg-success';
+                        
+                        return `<span class="badge ${badgeClass}">${role}</span>`;
+                    }
+                },
+                { 
+                    data: null,
+                    className: 'text-center',
+                    orderable: false,
+                    render: function(data) {
+                        const id = data.id;
+                        const isProtected = id === 1; // Protegemos el primer usuario
+                        
+                        return `
+                            <button class="btn btn-sm btn-info btn-editar-usuario" data-id="${id}" title="Editar Usuario">
+                                <i class="fa-regular fa-pen-to-square"></i> Editar
+                            </button>
+                            <button class="btn btn-sm btn-danger btn-eliminar-usuario" data-id="${id}" title="Eliminar Usuario" ${isProtected ? 'disabled' : ''}>
+                                <i class="fa-solid fa-trash"></i> Eliminar
+                            </button>
+                        `;
+                    }
+                }
+            ],
+            language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/es-MX.json' }
+        });
+
+        // Listeners para botones
+        $('#btnNuevoUsuario').on('click', () => showUsuarioModal(null));
+        
+        // Delegación de eventos para editar y eliminar
+        $('#tablaUsuarios').on('click', '.btn-editar-usuario', function() {
+            const id = $(this).data('id');
+            const rowData = dtUsuarios.row($(this).parents('tr')).data();
+            showUsuarioModal(rowData);
+        });
+        
+        $('#tablaUsuarios').on('click', '.btn-eliminar-usuario', function() {
+            eliminarUsuario($(this).data('id'));
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,749 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<!-- Lógica de Status (Activo/Suspendido/Eliminado) -->
+{% set cliente_status = suscripcion.status if suscripcion and suscripcion.status else 'Sin Suscripción' %}
+{% set cliente_id = cliente.id %}
+{% set color = 
+    'bg-success' if cliente_status == 'Activo' else
+    ('bg-warning text-dark' if cliente_status == 'Suspendido' else
+    ('bg-danger' if cliente_status == 'Eliminado' else
+    'bg-info text-dark'))
+%}
+{% set estados = ['Activo', 'Suspendido', 'Eliminado', 'En prueba'] %}
+
+<!-- Lógica de Status PAGO -->
+{% set status_pago = suscripcion.status_pago_info if suscripcion and suscripcion.status_pago_info else {'status': 'SIN PAGO', 'color': 'bg-secondary'} %}
+
+
+<!-- CONTENEDOR PRINCIPAL -->
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+  
+  <!-- CABECERA DE CLIENTE Y STATUS (Bloque A) -->
+  <div class="d-flex align-items-center mb-4">
+    
+    <!-- TÍTULO Y DETALLES PRINCIPALES -->
+    <div>
+        <!-- 1. Nombre del Negocio -->
+        <h2 class="mb-2">{{ cliente.negocio }}</h2>
+
+        <!-- Dropdown de STATUS (Activo/Suspendido) -->
+        <div class="dropdown mb-3">
+          <button class="badge rounded-pill px-3 py-2 dropdown-toggle fs-6 {{ color }}" data-bs-toggle="dropdown" id="statusDropdownButton" data-id="{{ cliente_id }}" {% if not current_user.role in ['SUPERADMIN', 'ADMIN'] %}disabled{% endif %}>
+            {{ cliente_status }}
+          </button>
+          <ul class="dropdown-menu" aria-labelledby="statusDropdownButton">
+            {% for e in estados %}
+                <li>
+                    {% if current_user.role in ['SUPERADMIN', 'ADMIN'] %}
+                        <a class="dropdown-item cambiar-status-detalle" href="#" data-id="{{ cliente_id }}" data-status="{{ e }}">{{ e }}</a>
+                    {% else %}
+                        <span class="dropdown-item disabled text-muted">{{ e }}</span>
+                    {% endif %}
+                </li>
+            {% endfor %}
+          </ul>
+        </div>
+        
+        <!-- 2. Fila: SERVER, PAQUETE, VIGENCIA -->
+        <div class="text-muted small d-flex flex-wrap gap-3 mb-1 txt-detalles">
+          {% if suscripcion and suscripcion.server %}<span><strong>Server:</strong> {{ suscripcion.server }}</span>{% endif %}
+          {% if suscripcion and suscripcion.paquete %}<span><strong>Paquete:</strong> {{ suscripcion.paquete }}</span>{% endif %}
+          {% if suscripcion and suscripcion.vigencia %}<span><strong>Vigencia:</strong> {{ suscripcion.vigencia }}</span>{% endif %}
+        </div>
+
+        <!-- 3. Fila: PAÍS, LOCALIDAD, ID GUMI, RFC -->
+        <div class="text-muted small d-flex flex-wrap gap-3">
+          <span><strong>País:</strong> {{ cliente.pais }}</span>
+          {% if cliente.localidad %}<span><strong>Localidad:</strong> {{ cliente.localidad }}</span>{% endif %}
+          {% if suscripcion and suscripcion.id_gumi %}
+            <span><strong>ID Gumi:</strong> {{ suscripcion.id_gumi }}</span>
+          {% endif %}
+          {% if cliente.rfc %}
+            <span><strong>RFC/NIT:</strong> {{ cliente.rfc }}</span>
+          {% endif %}
+        </div>
+    </div>
+  </div>
+
+
+  <!-- Botones de Acción -->
+  <div class="d-flex">
+    <a href="{{ url_for('clientes_editar', id=cliente.id) }}" class="btn btn-outline-secondary me-4 pt-3 pb-3">
+      <i class="fa-regular fa-pen-to-square"></i> Editar Cliente
+    </a>
+    <button class="btn btn-success" id="btnAgregarPago" data-id="{{ cliente.id }}">
+      <i class="fa-solid fa-coins"></i> Agregar pago
+    </button>
+  </div>
+</div>
+
+<hr class="my-3">
+
+<div class="row g-3">
+  
+  <!-- COLUMNA LATERAL (Resumen y Contacto) -->
+  <div class="col-xl-3 col-lg-3">
+    <div class="card">
+      <div class="card-header bg-light">
+        <strong>Resumen y Contacto</strong>
+      </div>
+      <div class="card-body">
+        
+        <!-- A. Status Pago & Próximo Pago -->
+        <div class="mb-3">
+            <span class="badge rounded-pill px-3 py-2 fs-6 {{ status_pago.color }}">
+              {{ status_pago.status }}
+            </span>
+        </div>
+        <div class="mb-3">
+            <strong>Próximo Pago:</strong>
+            <span class="fw-bold">
+                {{ suscripcion.proximo_pago | formatearFecha | default('—') }}
+            </span>
+        </div>
+        <hr>
+        
+        <!-- B. Contactos -->
+        <div class="mb-2"><strong>Nombre de contacto:</strong> {{ cliente.nombre_contacto }}</div>
+        <div class="mb-2"><strong>Correo:</strong> <a href="mailto:{{ cliente.mail }}">{{ cliente.mail }}</a></div>
+        <div class="mb-2"><strong>Teléfonos:</strong>
+          {% set telefono_principal = cliente.telefono|string|replace(".0", "") %}
+          {% set tel_sec_1 = cliente.telefono_secundario_1|string|replace(".0", "") %}
+          {% set tel_sec_2 = cliente.telefono_secundario_2|string|replace(".0", "") %}
+          {% set tel_sec_3 = cliente.telefono_secundario_3|string|replace(".0", "") %}
+          
+          <div><a href="https://wa.me/{{ telefono_principal }}" target="_blank">{{ telefono_principal }}</a></div>
+          {% if tel_sec_1 %}<div class="small text-muted"><a href="https://wa.me/{{ tel_sec_1 }}" target="_blank">{{ tel_sec_1 }}</a></div>{% endif %}
+          {% if tel_sec_2 %}<div class="small text-muted"><a href="https://wa.me/{{ tel_sec_2 }}" target="_blank">{{ tel_sec_2 }}</a></div>{% endif %}
+          {% if tel_sec_3 %}<div class="small text-muted"><a href="https://wa.me/{{ tel_sec_3 }}" target="_blank">{{ tel_sec_3 }}</a></div>{% endif %}
+        </div>
+        <hr>
+        
+        <!-- C. Facturación -->
+        <div class="mb-2">
+          <strong>Requiere factura:</strong>
+          {{ "Sí" if cliente.requiere_factura else "No" }}
+        </div>
+        <div class="mb-2">
+          <strong>RFC/NIT:</strong>
+          {{ cliente.rfc or '—' }}
+        </div>
+        {% if cliente.mail_facturas %}
+        <div class="mb-2">
+          <strong>Mail para facturas:</strong>
+          <div><a href="mailto:{{ cliente.mail_facturas }}">{{ cliente.mail_facturas }}</a></div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- COLUMNA PRINCIPAL (Tabla de Pagos) -->
+  <div class="col-xl-9 col-lg-9">
+    <div class="card">
+      <div class="card-header bg-light">
+        <div class="d-flex justify-content-between align-items-center">
+          <strong>Pagos registrados</strong>
+          <div class="small text-muted">Ordenados del más reciente al más antiguo</div>
+        </div>
+      </div>
+      <div>
+        <div class="d-flex gap-2 justify-content-center my-2">
+          <select id="filtroAnio" class="form-select form-select-sm" style="width: 140px;">
+            <option value="">Todos los Años</option>
+          </select>
+          <select id="filtroMes" class="form-select form-select-sm" style="width: 140px;">
+            <option value="">Todos los Meses</option>
+            <option value="0">Enero</option>
+            <option value="1">Febrero</option>
+            <option value="2">Marzo</option>
+            <option value="3">Abril</option>
+            <option value="4">Mayo</option>
+            <option value="5">Junio</option>
+            <option value="6">Julio</option>
+            <option value="7">Agosto</option>
+            <option value="8">Septiembre</option>
+            <option value="9">Octubre</option>
+            <option value="10">Noviembre</option>
+            <option value="11">Diciembre</option>
+          </select>
+        </div>
+        <div class="text-center fw-bold mt-2">
+          Total Pagado (Filtrado): 
+          <span id="totalPagado" class="text-success fs-5">$0.00</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <table id="tablaPagos" class="table table-striped table-hover w-100">
+          <thead class="table-primary text-center">
+            <tr>
+              <th>Fecha de pago</th>
+              <th>Paquete</th>
+              <th>Vigencia</th>
+              <th>Monto pagado</th>
+              <th>Motivo del descuento</th>
+              <th>Moneda</th>
+              <th>Método de pago</th>
+              <th>¿Facturado?</th>
+              <th>Número de factura</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block custom_scripts %}
+<!-- 🛑 BLOQUE DE JAVASCRIPT: Se asume que este bloque está completo con la lógica de DataTables y modales 🛑 -->
+<script>
+  // Función auxiliar de formateo de fecha (DEJADA AQUÍ POR SEGURIDAD)
+  function formatearFecha(f) {
+    if (!f) return '—';
+    const d = new Date(f + 'T00:00:00');
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  }
+
+  // Funciones auxiliares para obtener valores de SweetAlert
+  const getValSafe = (id) => {
+    const el = document.getElementById(id);
+    return (el && el.value !== undefined) ? el.value : '';
+  };
+  const getCheckedSafe = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.checked : false;
+  };
+
+  const clienteId = {{ cliente.id }};
+  let dt; // Declaración global para DataTables
+
+  $(document).ready(function() {
+    const userRole = '{{ current_user.role }}';
+    const canModify = userRole === 'SUPERADMIN' || userRole === 'ADMIN';
+
+    // Función para recargar la página después de un cambio de status (lo más simple)
+    function reloadClientDetails() {
+        window.location.reload(); 
+    }
+
+    // ===============================================
+    // 1. INICIALIZACIÓN DE DATATABLES Y FILTROS
+    // ===============================================
+    
+    // Filtro personalizado de DataTables
+    $.fn.dataTable.ext.search.push(
+      function( settings, data, dataIndex ) {
+        if (settings.nTable.id !== 'tablaPagos') return true;
+
+        const anioSel = $('#filtroAnio').val();
+        const mesSel = $('#filtroMes').val();
+        
+        const fechaPagoStr = dt.cell(dataIndex, 0).data(); 
+
+        if (!anioSel && !mesSel) return true;
+        if (!fechaPagoStr || fechaPagoStr === '—') return false;
+
+        const fechaPago = new Date(fechaPagoStr + 'T00:00:00');
+
+        let anioOk = true;
+        let mesOk = true;
+
+        if (anioSel) anioOk = (fechaPago.getFullYear() == anioSel);
+        if (mesSel) mesOk = (fechaPago.getMonth() == mesSel); 
+        
+        return anioOk && mesOk;
+      }
+    );
+
+    // DataTable de pagos
+    dt = $('#tablaPagos').DataTable({
+      ajax: { url: `/api/pagos_cliente_v2/${clienteId}`, dataSrc: 'data' },
+      order: [[0, 'desc']],
+      pageLength: 10,
+      columns: [
+        { 
+          data: 'fecha_pago', 
+          render: {
+              _: formatearFecha, 
+              sort: data => data 
+          },
+          className: 'text-center' 
+        },
+        { data: 'paquete' },
+        { data: 'vigencia', className: 'text-center' },
+        { data: 'monto', className: 'text-end' },
+        { data: 'motivo_descuento', defaultContent: '—', className: 'text-center' },
+        { data: 'moneda', className: 'text-center' },
+        { data: 'metodo_pago', className: 'text-center' },
+        {
+          data: 'facturado',
+          className: 'text-center',
+          render: function(v, t, row) {
+            const cls = (v === 'Sí') ? 'btn-success' : 'btn-outline-secondary';
+            return `<button class="btn btn-sm ${cls} btn-facturado" data-id="${row.id}" data-estado="${v}">${v}</button>`;
+          }
+        },
+        { data: 'numero_factura', className: 'text-center' },
+        {
+          data: 'id',
+          className: 'text-center',
+          render: function(id, t, row) {
+            const status_norm = (row.status || '').toUpperCase(); 
+            
+            if (status_norm === 'CANCELADO') {
+              return `
+                <button class="btn btn-sm btn-outline-danger btn-ver-pago" data-id="${id}" title="Ver detalles">
+                  <i class="fa-solid fa-magnifying-glass"></i> VER
+                </button>`; 
+            }
+            
+            return `
+              <div class="d-flex gap-2 justify-content-center">
+                <button class="btn btn-sm btn-primary btn-editar-pago" data-id="${id}" title="Editar pago"> 
+                  <i class="fa-regular fa-pen-to-square"></i>
+                </button>
+                <button class="btn btn-sm btn-danger btn-eliminar-pago" data-id="${id}" title="Eliminar pago">
+                  <i class="fa-regular fa-trash-can"></i>
+                </button>
+              </div>`;
+          }
+        }
+      ],
+      dom: 'lBfrtip',
+      buttons: [
+        { extend: 'excelHtml5', text: '<i class="fa fa-file-excel"></i> Excel', className: 'btn btn-success btn-sm' },
+        { extend: 'csvHtml5', text: '<i class="fa fa-file-csv"></i> CSV', className: 'btn btn-outline-secondary btn-sm' },
+        { extend: 'copyHtml5', text: '<i class="fa fa-copy"></i> Copiar', className: 'btn btn-outline-dark btn-sm' }
+      ],
+      rowCallback: function(row, data) {
+          if (data.status === 'CANCELADO') {
+              $(row).addClass('table-danger'); 
+          }
+      },
+      language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/es-MX.json' }
+    });
+
+    // Función para calcular y mostrar la suma total de pagos (activos)
+    function actualizarSuma() {
+      let total = 0;
+      dt.rows({ search: 'applied' }).data().each(function(row) {
+        if ((row.status || '').toUpperCase() === 'CANCELADO') return; 
+        
+        const montoString = row.monto; 
+        const cleanMonto = String(montoString).replace(/[^0-9.-]+/g, "") || '0';
+        const num = parseFloat(cleanMonto);
+        
+        if (!isNaN(num)) total += num;
+      });
+      $('#totalPagado').text('$' + total.toLocaleString('es-MX', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+    }
+    
+    // Poblar el select de Años dinámicamente
+    dt.on('init', function() {
+      const anios = new Set();
+      dt.column(0).data().each(function(val) {
+        if (val && val !== '—') anios.add(new Date(val + 'T00:00:00').getFullYear());
+      });
+      const anioSelect = $('#filtroAnio');
+      anioSelect.empty().append('<option value="">Todos los Años</option>');
+      [...anios].sort().reverse().forEach(anio => anioSelect.append(`<option value="${anio}">${anio}</option>`));
+      actualizarSuma();
+    });
+
+    // Recalcular suma en cada 'draw'
+    dt.on('draw', actualizarSuma);
+
+    // Listeners para que los filtros redibujen la tabla
+    $('#filtroAnio, #filtroMes').on('change', () => dt.draw());
+
+
+    // ===============================================
+    // 2. MODAL: AGREGAR / EDITAR / VER PAGO
+    // ===============================================
+    async function abrirModalPago(clienteId, idPago = null, esLectura = false) { 
+      const esEdicion = (idPago !== null);
+      let infoPagoExistente = null;
+      let paquetes; 
+      let paquete_id_actual;
+
+      // 1. Cargar info del cliente y paquetes
+      const respInfo = await fetch(`/api/cliente_pago/${clienteId}`);
+      const info = await respInfo.json();
+      if (!info.ok) { Swal.fire('Error', info.error || 'No se pudo cargar la información.', 'error'); return; }
+      const { negocio, paquetes: paquetesData, paquete_id_actual: paqueteIdActual } = info.data;
+      paquetes = paquetesData;
+      paquete_id_actual = paqueteIdActual;
+
+
+      // 2. Cargar info del pago (si es edición/ver)
+      if (esEdicion) {
+          try {
+              const respPago = await fetch(`/api/pago/${idPago}`);
+              const dataPago = await respPago.json();
+              if (dataPago.ok) {
+                  infoPagoExistente = dataPago.data;
+              } else {
+                  Swal.fire('Error', 'No se pudieron cargar los datos del pago.', 'error');
+                  return;
+              }
+          } catch (e) {
+              Swal.fire('Error', 'Error de conexión al cargar el pago.', 'error');
+              return;
+          }
+      }
+
+      const opcionesPaquete = paquetes.map(p =>
+          `<option value="${p.id}" ${p.id === paquete_id_actual ? 'selected' : ''}>
+            ${p.nombre} – ${p.vigencia} (${p.moneda} ${Number(p.precio).toFixed(2)})
+          </option>`
+      ).join('');
+
+      // 3. Mostrar SweetAlert
+      const { value: formValues } = await Swal.fire({
+        title: esLectura ? `Detalles del Pago Cancelado – ${negocio}` : (esEdicion ? `Editar pago – ${negocio}` : `Agregar pago – ${negocio}`),
+        width: 700,
+        html: ` 
+          <div class="text-start">
+            <label class="form-label mt-2">Fecha de pago *</label>
+            <input type="date" id="fecha_pago" class="form-control" 
+                  value="${infoPagoExistente ? infoPagoExistente.fecha_pago : new Date().toISOString().split('T')[0]}" required>
+
+            <label class="form-label mt-2">Paquete *</label>
+            <select id="paquete" class="form-select">${opcionesPaquete}</select>
+
+            <label class="form-label mt-2">Monto total</label>
+            <input type="text" id="monto" class="form-control text-end" 
+                  value="${infoPagoExistente ? infoPagoExistente.monto_display : ''}">
+
+            <label class="form-label mt-2">Método de pago *</label>
+            <select id="metodo_pago" class="form-select">
+              <option value="">— Selecciona —</option>
+              <option value="Transferencia">Transferencia</option>
+              <option value="Depósito">Depósito</option>
+              <option value="Mercado Pago">Mercado Pago</option>
+              <option value="Nequi">Nequi</option>
+              <option value="Otro">Otro</option>
+            </select>
+
+            <div id="campo_otro_metodo" style="display:none;">
+              <label class="form-label mt-2">Especifica método</label>
+              <input type="text" id="otro_metodo_pago" class="form-control" 
+                    value="${infoPagoExistente ? infoPagoExistente.otro_metodo_pago : ''}">
+            </div>
+
+            <label class="form-label mt-2">Motivo del descuento</label>
+            <input type="text" id="motivo_descuento" class="form-control" 
+                  value="${infoPagoExistente ? infoPagoExistente.motivo_descuento : ''}">
+
+            <div class="form-check form-switch mt-3">
+              <input class="form-check-input" type="checkbox" id="factura_pago" 
+                    ${infoPagoExistente && infoPagoExistente.factura_pago ? 'checked' : ''}>
+              <label class="form-check-label" for="factura_pago">¿Se factura este pago?</label>
+            </div>
+
+            <div id="campo_num_factura" style="display:none;">
+              <label class="form-label mt-2">Número de factura</label>
+              <input type="text" id="numero_factura" class="form-control" 
+                    value="${infoPagoExistente ? infoPagoExistente.numero_factura : ''}">
+            </div>
+            
+          </div>
+        `,
+        focusConfirm: false,
+        confirmButtonText: esEdicion ? 'Guardar Cambios' : 'Guardar pago',
+        showConfirmButton: !esLectura && canModify,
+        showCancelButton: true,
+        cancelButtonText: esLectura ? 'Cerrar' : 'Cancelar',
+        didOpen: () => {
+          const selPaquete = document.getElementById('paquete');
+          const campoMonto = document.getElementById('monto');
+          const selMetodoPago = document.getElementById('metodo_pago');
+          const inputFechaPago = document.getElementById('fecha_pago');
+          const inputFactura = document.getElementById('factura_pago');
+          
+          function getPaquete(id) { return paquetes.find(x => x.id == id); }
+
+          function actualizarMonto() {
+            if (!esEdicion || !campoMonto.value || isNaN(parseFloat(campoMonto.value))) { 
+              const selectedId = parseInt(selPaquete.value); 
+              const p = getPaquete(selectedId); 
+              campoMonto.value = p ? `${p.moneda} ${Number(p.precio).toFixed(2)}` : '';
+            }
+            if (esLectura) {
+              const swalContent = Swal.getHtmlContainer();
+              swalContent.querySelectorAll('input, select, textarea').forEach(el => el.setAttribute('disabled', 'disabled'));
+            }
+          }
+
+          function actualizarRequeridos() {
+            const p = getPaquete(selPaquete.value);
+            const esDemo = p && (p.nombre || '').toUpperCase().includes('DEMO');
+            if (esDemo) {
+              if (selMetodoPago) selMetodoPago.removeAttribute('required');
+              if (inputFechaPago) inputFechaPago.removeAttribute('required');
+            } else {
+              if (selMetodoPago) selMetodoPago.setAttribute('required', 'required');
+              if (inputFechaPago) inputFechaPago.setAttribute('required', 'required');
+            }
+          }
+          
+          selPaquete.addEventListener('change', () => {
+            actualizarMonto();
+            actualizarRequeridos();
+          });
+          
+          // Inicializar valores de edición
+          if (esEdicion && infoPagoExistente) {
+            const idPaqueteGuardado = infoPagoExistente.paquete_precio_id_actual;
+            if (idPaqueteGuardado) selPaquete.value = String(idPaqueteGuardado);
+            selMetodoPago.value = infoPagoExistente.metodo_pago;
+            if (infoPagoExistente.factura_pago && infoPagoExistente.numero_factura) {
+                inputFactura.checked = true;
+            }
+          } else {
+            // Inicializar valores de agregar
+            selPaquete.value = paquete_id_actual;
+          }
+
+          // Lógica de campos dependientes
+          document.getElementById('metodo_pago').addEventListener('change', (e) => {
+            document.getElementById('campo_otro_metodo').style.display = e.target.value === 'Otro' ? 'block' : 'none';
+          });
+          document.getElementById('factura_pago').addEventListener('change', (e) => {
+            document.getElementById('campo_num_factura').style.display = e.target.checked ? 'block' : 'none';
+          });
+          
+          actualizarMonto();
+          actualizarRequeridos();
+          selMetodoPago.dispatchEvent(new Event('change'));
+          inputFactura.dispatchEvent(new Event('change'));
+        },
+        preConfirm: () => {
+          if (esLectura) return;
+          const paquete_id = getValSafe('paquete'); 
+          const p = paquetes.find(x => x.id == paquete_id);
+          const esDemo = p && (p.nombre || '').toUpperCase().includes('DEMO');
+
+          if (!paquete_id) { Swal.showValidationMessage('El paquete es obligatorio'); return false; }
+
+          if (!esDemo) {
+            if (!getValSafe('fecha_pago')) { Swal.showValidationMessage('La fecha de pago es obligatoria'); return false; }
+            if (!getValSafe('metodo_pago')) { Swal.showValidationMessage('El método de pago es obligatorio'); return false; }
+          }
+          
+          return {
+            fecha_pago: getValSafe('fecha_pago'),
+            paquete: paquete_id, 
+            metodo_pago: getValSafe('metodo_pago'),
+            otro_metodo_pago: getValSafe('otro_metodo_pago'),
+            motivo_descuento: getValSafe('motivo_descuento'),
+            factura_pago: getCheckedSafe('factura_pago'),
+            numero_factura: getValSafe('numero_factura'),
+            monto: getValSafe('monto') 
+          };
+        }
+      });      
+
+
+      if (esLectura || !formValues) return;
+
+      const url = esEdicion ? `/api/pago/editar/${idPago}` : '/api/pagos/nuevo';
+      const bodyPayload = esEdicion 
+          ? { ...formValues } 
+          : { cliente_id: clienteId, ...formValues };
+
+      const respPago = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload)
+      });
+
+      const dataPago = await respPago.json();
+      const tituloExito = esEdicion ? 'Pago actualizado' : 'Pago registrado';
+
+      if (dataPago.ok) {
+        await Swal.fire({ icon: 'success', title: tituloExito, showConfirmButton: false, timer: 1600 });
+        location.reload(); 
+      } else {
+        Swal.fire('Error', dataPago.error || 'No se pudo guardar el pago', 'error');
+      }
+    } 
+
+    // ===============================================
+    // 3. LISTENERS DE ACCIONES
+    // ===============================================
+
+    // Listener para el DROPDOWN de Status
+    $('#statusDropdownButton').parent().on('click', '.cambiar-status-detalle', async function(e) {
+        e.preventDefault();
+        const clienteId = $(this).data('id');
+        const nuevoStatus = $(this).data('status');
+        
+        if (!canModify) return;
+
+        if (nuevoStatus === 'Eliminado') {
+            const confirm = await Swal.fire({
+                title: '¿Eliminar cliente?',
+                text: 'Esta acción marcará al cliente como "Eliminado" en el sistema.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Sí, eliminar',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#6c757d'
+            });
+            if (!confirm.isConfirmed) return;
+        }
+
+        const resp = await fetch(`/api/clientes/${clienteId}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: nuevoStatus })
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'success',
+                title: `Status cambiado a "${nuevoStatus}"`,
+                showConfirmButton: false,
+                timer: 2000
+            });
+            setTimeout(reloadClientDetails, 500); 
+
+        } else {
+            Swal.fire('Error', data.error || 'No se pudo cambiar el status', 'error');
+        }
+    });
+    
+    // Botón superior: Agregar Pago
+    $('#btnAgregarPago').on('click', () => abrirModalPago(clienteId));
+
+    // Listeners de la tabla de pagos
+    $('#tablaPagos').on('click', '.btn-editar-pago', function() {
+      const idPago = $(this).data('id');
+      abrirModalPago(clienteId, idPago, false);
+    });
+
+    $('#tablaPagos').on('click', '.btn-ver-pago', function() {
+      const idPago = $(this).data('id');
+      abrirModalPago(clienteId, idPago, true);
+    });
+
+    // Toggle ¿Facturado?
+    $('#tablaPagos').on('click', '.btn-facturado', async function() {
+        const btn = $(this);
+        const idPago = btn.data('id');
+        const estadoActual = btn.data('estado'); 
+        const esFacturado = (estadoActual === 'Sí');
+        
+        const respGet = await fetch(`/api/pago/${idPago}`);
+        const jsonGet = await respGet.json();
+        if (!jsonGet.ok) { Swal.fire('Error', 'No se pudo leer la información del pago.', 'error'); return; }
+        const pagoData = jsonGet.data;
+
+        let nuevoEstadoFactura = !esFacturado;
+        let nuevoNumeroFactura = pagoData.numero_factura || '';
+
+        if (nuevoEstadoFactura) {
+            const { value: numInput } = await Swal.fire({
+                title: 'Registrar Factura',
+                input: 'text',
+                inputLabel: 'Ingresa el número de factura o folio',
+                inputValue: nuevoNumeroFactura,
+                showCancelButton: true,
+                confirmButtonText: 'Guardar',
+                cancelButtonText: 'Cancelar',
+                inputValidator: (value) => { if (!value) return '¡Debes escribir un número de factura!'; }
+            });
+            if (!numInput) return;
+            nuevoNumeroFactura = numInput;
+
+        } else {
+            const confirm = await Swal.fire({
+                title: '¿Quitar marca de facturado?',
+                text: "Se borrará el número de factura registrado.",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                confirmButtonText: 'Sí, quitar',
+                cancelButtonText: 'Cancelar'
+            });
+            if (!confirm.isConfirmed) return;
+            nuevoNumeroFactura = '';
+        }
+
+        const payload = {
+            fecha_pago: pagoData.fecha_pago,
+            monto: pagoData.monto_num,
+            metodo_pago: pagoData.metodo_pago,
+            otro_metodo_pago: pagoData.otro_metodo_pago,
+            motivo_descuento: pagoData.motivo_descuento,
+            
+            factura_pago: nuevoEstadoFactura,
+            numero_factura: nuevoNumeroFactura,
+            
+            paquete: pagoData.paquete_precio_id_actual 
+        };
+
+        const respSave = await fetch(`/api/pago/editar/${idPago}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        const jsonSave = await respSave.json();
+
+        if (jsonSave.ok) {
+            dt.ajax.reload(null, false); 
+            const msg = nuevoEstadoFactura 
+                ? `Factura ${nuevoNumeroFactura} registrada` 
+                : 'Marca de facturado eliminada';
+            const toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2000 });
+            toast.fire({ icon: 'success', title: msg });
+        } else {
+            Swal.fire('Error', jsonSave.error || 'No se pudo actualizar.', 'error');
+        }
+    });
+
+    // Eliminar pago
+    $('#tablaPagos').on('click', '.btn-eliminar-pago', async function() {
+      const idPago = $(this).data('id');
+      const c = await Swal.fire({
+        title: '¿Eliminar este pago?',
+        text: `Se eliminará el registro del pago ID ${idPago}. Esta acción no se puede deshacer.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+      });
+      
+      if (!c.isConfirmed) return;
+
+      try {
+        const resp = await fetch(`/api/pagos/${idPago}/soft_delete`, {
+          method: 'POST',
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+          await Swal.fire({ icon: 'success', title: 'Pago eliminado', showConfirmButton: false, timer: 1500 });
+          location.reload(); 
+        } else {
+          Swal.fire('Error', data.error || 'No se pudo eliminar el pago.', 'error');
+        }
+      } catch (e) {
+        Swal.fire('Error', 'Hubo un error de conexión.', 'error');
+      }
+    });
+  });
+</script>
+{% endblock %}

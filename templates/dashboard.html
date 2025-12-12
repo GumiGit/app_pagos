@@ -1,0 +1,618 @@
+{% extends "base.html" %}
+
+{% block head %}
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .card-dashboard {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            transition: transform 0.2s;
+            height: 100%; /* Asegura que todas las tarjetas tengan la misma altura */
+        }
+        .card-dashboard:hover {
+            transform: translateY(-5px);
+        }
+        .icon-shape {
+            width: 48px;
+            height: 48px;
+            background-position: center;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .bg-gradient-primary { background: linear-gradient(310deg, #7928ca, #ff0080); color: white; }
+        .bg-gradient-success { background: linear-gradient(310deg, #17ad37, #98ec2d); color: white; }
+        .bg-gradient-info { background: linear-gradient(310deg, #2152ff, #21d4fd); color: white; }
+        .bg-gradient-warning { background: linear-gradient(310deg, #f53939, #fbcf33); color: white; }
+        .bg-gradient-dark { background: linear-gradient(310deg, #141727, #3a416f); color: white; }
+        
+        .chart-container {
+            position: relative;
+            height: 250px;
+            width: 100%;
+        }
+        .chart-container-lg {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <h2 class="mb-4">Dashboard</h2>
+    <!-- 1. FILTROS -->
+    <div class="card mb-4 shadow-sm">
+        <div class="card-body p-3">
+            <form id="filterForm" class="row g-3 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label fw-bold text-xs">Año</label>
+                    <select id="filtroAnio" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="2025" selected>2025</option>
+                        <option value="2024">2024</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold text-xs">Mes</label>
+                    <select id="filtroMes" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="1">Enero</option>
+                        <option value="2">Febrero</option>
+                        <option value="3">Marzo</option>
+                        <option value="4">Abril</option>
+                        <option value="5">Mayo</option>
+                        <option value="6">Junio</option>
+                        <option value="7">Julio</option>
+                        <option value="8">Agosto</option>
+                        <option value="9">Septiembre</option>
+                        <option value="10">Octubre</option>
+                        <option value="11">Noviembre</option>
+                        <option value="12">Diciembre</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold text-xs">País</label>
+                    <select id="filtroPais" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="MÉXICO">MÉXICO</option>
+                        <option value="COLOMBIA">COLOMBIA</option>
+                        <option value="LATAM">LATAM</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold text-xs">Servidor</label>
+                    <select id="filtroServer" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="Principal">Principal</option>
+                        <option value="Petyou">Petyou</option>
+                        <!-- Agregar más si necesario -->
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold text-xs">Paquete</label>
+                    <select id="filtroPaquete" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="Abeja">Abeja</option>
+                        <option value="Clínica">Clínica</option>
+                        <option value="Iguana">Iguana</option>
+                        <option value="Chango">Chango</option>
+                        <option value="Elefante">Elefante</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="button" class="btn btn-primary btn-sm w-100 mb-0" onclick="cargarDatosDashboard()">
+                        <i class="fa-solid fa-filter me-1"></i> Filtrar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. TARJETAS KPI - FILA 1: INGRESOS Y PAGOS -->
+    <div class="row mb-4 g-4">
+        
+        <!-- 1. Ingresos Totales (Global) -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">Ingresos Totales (MXN Aprox)</p>
+                                <h5 class="font-weight-bolder mb-0 text-success" id="kpiIngresosGlobal">
+                                    $0.00
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-success shadow text-center border-radius-md">
+                                <i class="fa-solid fa-sack-dollar text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Ingresos MX (Solo MXN) -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">Ingresos MX (MXN)</p>
+                                <h5 class="font-weight-bolder mb-0 text-info" id="kpiIngresosMX">
+                                    $0.00
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-info shadow text-center border-radius-md">
+                                <i class="fa-solid fa-peso-sign text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Ingresos Colombia + LATAM (en MXN) -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">Ingresos COL+LATAM (MXN)</p>
+                                <h5 class="font-weight-bolder mb-0 text-warning" id="kpiIngresosLATAM">
+                                    $0.00
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-warning shadow text-center border-radius-md">
+                                <i class="fa-solid fa-coins text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. Número de pagos -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">Número de Pagos</p>
+                                <h5 class="font-weight-bolder mb-0 text-dark" id="kpiNumPagos">
+                                    0
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-dark shadow text-center border-radius-md">
+                                <i class="fa-solid fa-receipt text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 2. TARJETAS KPI - FILA 2: CLIENTES Y RENDIMIENTO -->
+    <div class="row mb-4 g-4">
+        
+        <!-- 1. Clientes Activos (Existente) -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">Clientes Activos</p>
+                                <h5 class="font-weight-bolder mb-0 text-primary" id="kpiClientesActivos">
+                                    0
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-primary shadow text-center border-radius-md">
+                                <i class="fa-solid fa-users text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Número de DEMOs Activos -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">DEMOs Activos</p>
+                                <h5 class="font-weight-bolder mb-0 text-dark" id="kpiDemosActivos">
+                                    0
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-dark shadow text-center border-radius-md">
+                                <i class="fa-solid fa-rocket text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Antigüedad Promedio (Existente) -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">Antigüedad Promedio</p>
+                                <h5 class="font-weight-bolder mb-0 text-info" id="kpiAntiguedad">
+                                    0 Meses
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-info shadow text-center border-radius-md">
+                                <i class="fa-regular fa-calendar-check text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. % Facturado (Existente) -->
+        <div class="col-xl-3 col-sm-6">
+            <div class="card card-dashboard">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-8">
+                            <div class="numbers">
+                                <p class="text-xs mb-0 text-capitalize font-weight-bold">% Facturado</p>
+                                <h5 class="font-weight-bolder mb-0 text-primary" id="kpiFacturacion">
+                                    0%
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="col-4 text-end">
+                            <div class="icon-shape bg-gradient-primary shadow text-center border-radius-md">
+                                <i class="fa-solid fa-file-invoice-dollar text-lg opacity-10"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- 3. TENDENCIA Y VIGENCIAS (Mantenidas) -->
+    <div class="row mb-4">
+        <div class="col-lg-8 mb-lg-0 mb-4">
+            <div class="card z-index-2">
+                <div class="card-header pb-0">
+                    <h6>Tendencia de Ingresos (MXN)</h6>
+                    <p class="text-sm mb-0">
+                        <i class="fa fa-arrow-up text-success"></i>
+                        <span class="font-weight-bold">Unificando divisas</span> (USD/COP a MXN)
+                    </p>
+                </div>
+                <div class="card-body p-3">
+                    <div class="chart-container-lg">
+                        <canvas id="chartVentas"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="card z-index-2">
+                <div class="card-header pb-0">
+                    <h6>Top Vigencias</h6>
+                    <p class="text-sm text-muted">Preferencia de contratación</p>
+                </div>
+                <div class="card-body p-3">
+                    <div class="chart-container">
+                        <canvas id="chartVigencias"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. PRODUCTOS Y MÉTODOS (Mantenidas) -->
+    <div class="row mb-4">
+        <!-- Top Paquetes -->
+        <div class="col-lg-6 mb-lg-0 mb-4">
+            <div class="card z-index-2">
+                <div class="card-header pb-0">
+                    <h6>Top Paquetes</h6>
+                </div>
+                <div class="card-body p-3">
+                    <div class="chart-container">
+                        <canvas id="chartPaquetes"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Métodos de Pago -->
+        <div class="col-lg-6">
+            <div class="card z-index-2">
+                <div class="card-header pb-0">
+                    <h6>Métodos de Pago</h6>
+                </div>
+                <div class="card-body p-3">
+                    <div class="chart-container">
+                        <canvas id="chartMetodos"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. OPERATIVO Y FACTURACIÓN (Mantenidas) -->
+    <div class="row mb-4">
+        <div class="col-lg-6 mb-lg-0 mb-4">
+            <div class="card z-index-2">
+                <div class="card-header pb-0">
+                    <h6>Facturados vs No Facturados</h6>
+                </div>
+                <div class="card-body p-3">
+                    <div class="chart-container">
+                        <canvas id="chartFacturacion"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card z-index-2">
+                <div class="card-header pb-0">
+                    <h6>Carga por Servidor</h6>
+                </div>
+                <div class="card-body p-3">
+                    <div class="chart-container">
+                        <canvas id="chartServidores"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block custom_scripts %}
+<script>
+    // --- LIBRERÍAS Y VARIABLES GLOBALES ---
+    let chartVentas, chartVigencias, chartPaquetes, chartMetodos, chartFacturacion, chartServidores;
+    
+    // Función de ayuda para formatear moneda
+    const formatCurrency = (amount) => {
+        // Aseguramos que sea un número antes de formatear
+        const num = parseFloat(amount) || 0;
+        return '$' + num.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+    
+    // Función de ayuda para formatear números enteros
+    const formatNumber = (number) => {
+        const num = parseInt(number) || 0;
+        return num.toLocaleString('es-MX');
+    };
+
+    // Colores base de la paleta (mantenidos de tu CSS)
+    const colors = {
+        primary: '#7928ca', 
+        secondary: '#17ad37', 
+        info: '#21d4fd', 
+        danger: '#f53939', 
+        warning: '#fbcf33', 
+        dark: '#141727' 
+    };
+
+    // --- CONFIGURACIÓN E INICIALIZACIÓN DE CHART.JS (Mantenido) ---
+    function initCharts() {
+        // Aseguramos que los objetos Canvas existan antes de inicializarlos
+        if (chartVentas) chartVentas.destroy();
+        if (chartVigencias) chartVigencias.destroy();
+        if (chartPaquetes) chartPaquetes.destroy();
+        if (chartMetodos) chartMetodos.destroy();
+        if (chartFacturacion) chartFacturacion.destroy();
+        if (chartServidores) chartServidores.destroy();
+        
+        // 1. TENDENCIA INGRESOS (Línea)
+        chartVentas = new Chart(document.getElementById('chartVentas').getContext('2d'), {
+            type: 'line',
+            data: { labels: [], datasets: [{ 
+                label: 'Ingresos MXN', 
+                data: [], 
+                borderColor: colors.secondary, 
+                backgroundColor: 'rgba(23, 173, 55, 0.1)',
+                fill: true,
+                tension: 0.4 
+            }]},
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) { return '$' + value.toLocaleString(); }
+                        }
+                    }
+                }
+            }
+        });
+
+        // 2. TOP VIGENCIAS (Doughnut)
+        chartVigencias = new Chart(document.getElementById('chartVigencias').getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: [], datasets: [{ data: [], backgroundColor: [colors.primary, colors.secondary, colors.info, colors.danger] }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '60%' }
+        });
+
+        // 3. TOP PAQUETES (Bar Vertical)
+        chartPaquetes = new Chart(document.getElementById('chartPaquetes').getContext('2d'), {
+            type: 'bar',
+            data: { 
+                labels: ['Abeja', 'Clínica', 'Iguana', 'Chango', 'Elefante', 'Demo'], 
+                datasets: [{ label: 'Clientes', data: [], backgroundColor: colors.primary, borderRadius: 5 }] 
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // 4. MÉTODOS DE PAGO (Pie)
+        chartMetodos = new Chart(document.getElementById('chartMetodos').getContext('2d'), {
+            type: 'pie',
+            data: { labels: [], datasets: [{ data: [], backgroundColor: [colors.dark, colors.info, colors.secondary, colors.warning, colors.danger] }] },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // 5. FACTURACIÓN (Doughnut)
+        chartFacturacion = new Chart(document.getElementById('chartFacturacion').getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: ['Facturado', 'No Facturado'], datasets: [{ data: [], backgroundColor: [colors.secondary, colors.dark] }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '70%' }
+        });
+
+        // 6. SERVIDORES (Horizontal Bar)
+        chartServidores = new Chart(document.getElementById('chartServidores').getContext('2d'), {
+            type: 'bar',
+            data: { labels: [], datasets: [{ label: 'Clientes', data: [], backgroundColor: colors.info, borderRadius: 5 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    // --- FUNCIÓN PARA ACTUALIZAR KPIS (Ajustado a la nueva estructura) ---
+    function updateKPIs(kpiData) {
+        // --- FILA 1: INGRESOS Y PAGOS ---
+        
+        // 1. Ingresos Totales (Global) - Mapea el KPI de ingresos existente
+        document.getElementById('kpiIngresosGlobal').innerText = formatCurrency(kpiData.ingresos);
+        
+        // 2. Ingresos MX (NEW)
+        document.getElementById('kpiIngresosMX').innerText = formatCurrency(kpiData.ingresos_mx); 
+
+        // 3. Ingresos Colombia + LATAM (NEW)
+        document.getElementById('kpiIngresosLATAM').innerText = formatCurrency(kpiData.ingresos_latam); 
+
+        // 4. Número de Pagos (NEW) - Usamos el campo de conteo de pagos
+        document.getElementById('kpiNumPagos').innerText = formatNumber(kpiData.num_pagos); 
+
+        // --- FILA 2: CLIENTES Y RENDIMIENTO ---
+        
+        // 1. Clientes Activos (Mapea el KPI de clientes existente)
+        document.getElementById('kpiClientesActivos').innerText = formatNumber(kpiData.clientes);
+        
+        // 2. Número de DEMOs activos (NEW)
+        document.getElementById('kpiDemosActivos').innerText = formatNumber(kpiData.demos_activos); 
+
+        // 3. Antigüedad Promedio (Mantenido)
+        document.getElementById('kpiAntiguedad').innerText = kpiData.antiguedad + ' Meses';
+        
+        // 4. % Facturado (Mantenido)
+        document.getElementById('kpiFacturacion').innerText = kpiData.pct_facturado + '%'; 
+    }
+
+
+    function actualizarGraficas(data) {
+        
+        // 🛑 CRÍTICO: Actualizar los 8 KPIs
+        updateKPIs(data.kpi); 
+        
+        // 1. Ventas
+        chartVentas.data.labels = data.ventas.labels;
+        chartVentas.data.datasets[0].data = data.ventas.data;
+        chartVentas.update();
+
+        // 2. Vigencias
+        chartVigencias.data.labels = data.vigencias.labels;
+        chartVigencias.data.datasets[0].data = data.vigencias.data;
+        chartVigencias.update();
+
+        // 3. Paquetes (Usamos los labels hardcodeados en initCharts)
+        chartPaquetes.data.datasets[0].data = data.paquetes.data;
+        chartPaquetes.update();
+
+        // 4. Métodos
+        chartMetodos.data.labels = data.metodos.labels;
+        chartMetodos.data.datasets[0].data = data.metodos.data;
+        chartMetodos.update();
+
+        // 5. Facturación
+        chartFacturacion.data.datasets[0].data = data.facturacion.data;
+        chartFacturacion.update();
+
+        // 6. Servidores
+        chartServidores.data.labels = data.servidores.labels;
+        chartServidores.data.datasets[0].data = data.servidores.data;
+        chartServidores.update();
+    }
+    
+    // --- FUNCIÓN PARA CARGAR DATOS ---
+    async function cargarDatosDashboard() {
+        // Limpiamos los KPIs para mostrar estado de carga
+        const kpiElements = document.querySelectorAll('.font-weight-bolder');
+        kpiElements.forEach(el => el.innerText = '...');
+        
+        const filters = {
+            anio: document.getElementById('filtroAnio').value,
+            mes: document.getElementById('filtroMes').value,
+            pais: document.getElementById('filtroPais').value,
+            server: document.getElementById('filtroServer').value,
+            paquete: document.getElementById('filtroPaquete').value
+        };
+
+        const url = '/api/dashboard_data?' + new URLSearchParams(filters).toString();
+
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (response.ok) {
+                actualizarGraficas(data);
+            } else {
+                console.error("Error al obtener datos del dashboard:", data.error || "Error de servidor");
+                // Mostrar alerta de error
+                Swal.fire('Error', data.error || 'No se pudieron cargar los datos del dashboard.', 'error');
+            }
+
+        } catch (error) {
+            console.error("Error de conexión:", error);
+            Swal.fire('Error', 'Error de conexión con la API del dashboard.', 'error');
+        }
+    }
+
+
+    // Inicialización al cargar el DOM
+    document.addEventListener('DOMContentLoaded', function() {
+        // Esperamos 100ms para asegurar que el DOM esté listo
+        setTimeout(() => {
+            initCharts();
+            cargarDatosDashboard();
+        }, 100);
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+
+{% block head %}
+    <!-- LIBRERÍAS CSS -->
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
+    
+    <style>
+        .input-status { width: 100px; }
+        .d-none-dt { display: none; } /* Clase para ocultar columna de ordenamiento */
+        .status-select { min-width: 110px; font-size: 0.85rem; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+          <h2 class="mb-4">Clientes Por Vencer (Activos, No-DEMO, Próximos 15 días)</h2>
+            <div class="card mb-4">
+                <div class="card-body px-0 pt-0 pb-2">
+                    <!-- FILTROS -->
+
+                    <div class="card p-3 mb-3 bg-light">
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label for="filtroServer" class="form-label">Servidor</label>
+                                <select id="filtroServer" class="form-select form-select-sm">
+                                    <option value="">Todos</option>
+                                    {% for server in servers %}
+                                    <option value="{{ server }}">{{ server }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="filtroPais" class="form-label">País</label>
+                                <select id="filtroPais" class="form-select form-select-sm">
+                                    <option value="">Todos</option>
+                                    {% for pais in paises %}
+                                    <option value="{{ pais }}">{{ pais }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="filtroMonth" class="form-label">Mes Vencimiento</label>
+                                <select id="filtroMonth" class="form-select form-select-sm">
+                                    <option value="">Todos</option>
+                                    {% for month_num, month_name in meses %}
+                                    <option value="{{ month_num }}">{{ month_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <button id="btn_reset_filtros" class="btn btn-md btn-outline-danger mt-4 ms-4">
+                                    <i class="fa-solid fa-filter-circle-xmark"></i> Borrar filtros
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+                    
+                    <!-- TABLA DATATABLES -->
+                    <div class="table-responsive px-5">
+                        <table class="table align-items-center mb-0" id="tablaClientesPorVencer">
+                            <thead>
+                                <tr>
+                                    <!-- ORDEN DE COLUMNAS -->
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">ID Gumi</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">Server</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">País</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">Negocio</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">Contacto</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">Teléfonos</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">Status</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">Paquete</th>
+                                    <th class="text-uppercase text-secondary text-xxs font-weight-bolder opacity-7 text-center card-header">Vence En</th>
+                                    <th class="d-none-dt">Order</th>
+                                    <th class="text-secondary opacity-7 text-center card-header">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- DataTables cargará aquí -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block custom_scripts %}
+    <!-- 🛑 CARGA DE LIBRERÍAS JS (AQUÍ PARA ASEGURAR ORDEN) 🛑 -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+    <script type="text/javascript" charset="utf8" src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+    <!-- SWEETALERT2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+    console.log(">>> [DEBUG] Script de Clientes Por Vencer CARGADO");
+
+    const ALL_STATUSES = ['Activo', 'Suspendido', 'Eliminado', 'En prueba'];
+
+    // ====== Función Modal de Agregar Pago (GLOBAL) ======
+    async function abrirModalPago(clienteId, idPago = null, esLectura = false) {
+      console.log(`>>> [DEBUG] abrirModalPago INICIADA. ClienteID: ${clienteId}`);
+      
+      const esEdicion = (idPago !== null);
+      let infoPagoExistente = null;
+      
+      try {
+          // Verificación crítica de SweetAlert
+          if (typeof Swal === 'undefined') {
+              alert("Error Crítico: La librería SweetAlert2 no cargó. Revisa tu conexión a internet.");
+              return;
+          }
+
+          if (esEdicion) {
+              const respPago = await fetch(`/api/pago/${idPago}`);
+              const dataPago = await respPago.json();
+              if (dataPago.ok) infoPagoExistente = dataPago.data;
+              else { Swal.fire('Error', 'No se pudieron cargar los datos.', 'error'); return; }
+          }
+
+          const resp = await fetch(`/api/cliente_pago/${clienteId}`);
+          const info = await resp.json();
+
+          if (!info.ok) { 
+            Swal.fire('Error', info.error || 'No se pudo cargar info.', 'error'); 
+            return; 
+          }
+
+          const { negocio, paquetes, paquete_id_actual } = info.data;
+          const opcionesPaquete = paquetes.map(p =>
+              `<option value="${p.id}" ${p.id === paquete_id_actual ? 'selected' : ''}>
+                ${p.nombre} – ${p.vigencia} (${p.moneda} ${Number(p.precio).toFixed(2)})
+              </option>`
+          ).join('');
+
+          // --- DIBUJADO DEL MODAL ---
+          const { value: formValues } = await Swal.fire({
+            title: esLectura ? `Detalle Pago` : (esEdicion ? `Editar Pago` : `Agregar Pago – ${negocio}`),
+            width: 700,
+            html: ` 
+              <div class="text-start">
+                <label class="form-label mt-2">Fecha de pago *</label>
+                <input type="date" id="fecha_pago" class="form-control" 
+                      value="${infoPagoExistente ? infoPagoExistente.fecha_pago : new Date().toISOString().split('T')[0]}" required>
+
+                <label class="form-label mt-2">Paquete *</label>
+                <select id="paquete" class="form-select">${opcionesPaquete}</select>
+
+                <label class="form-label mt-2">Monto total</label>
+                <input type="text" id="monto" class="form-control text-end" 
+                      value="${infoPagoExistente ? infoPagoExistente.monto_num.toFixed(2) : ''}">
+
+                <label class="form-label mt-2">Método de pago *</label>
+                <select id="metodo_pago" class="form-select">
+                  <option value="">— Selecciona —</option>
+                  <option value="Transferencia">Transferencia</option>
+                  <option value="Depósito">Depósito</option>
+                  <option value="Mercado Pago">Mercado Pago</option>
+                  <option value="Nequi">Nequi</option>
+                  <option value="Otro">Otro</option>
+                </select>
+                <div id="campo_otro_metodo" style="display:none;">
+                  <label class="form-label mt-2">Especifica método</label>
+                  <input type="text" id="otro_metodo_pago" class="form-control" 
+                        value="${infoPagoExistente ? infoPagoExistente.otro_metodo_pago : ''}">
+                </div>
+                <label class="form-label mt-2">Motivo del descuento</label>
+                <input type="text" id="motivo_descuento" class="form-control" 
+                      value="${infoPagoExistente ? infoPagoExistente.motivo_descuento : ''}">
+                <div class="form-check form-switch mt-3">
+                  <input class="form-check-input" type="checkbox" id="factura_pago" 
+                        ${infoPagoExistente && infoPagoExistente.factura_pago ? 'checked' : ''}>
+                  <label class="form-label" for="factura_pago">¿Se factura este pago?</label>
+                </div>
+                <div id="campo_num_factura" style="display:none;">
+                  <label class="form-label mt-2">Número de factura</label>
+                  <input type="text" id="numero_factura" class="form-control" 
+                        value="${infoPagoExistente ? infoPagoExistente.numero_factura : ''}">
+                </div>
+              </div>
+            `, 
+            focusConfirm: false,
+            confirmButtonText: 'Guardar',
+            showCancelButton: true,
+            cancelButtonText: 'Cancelar',
+            didOpen: () => {
+              const selPaquete = document.getElementById('paquete');
+              const campoMonto = document.getElementById('monto');
+              const selMetodoPago = document.getElementById('metodo_pago');
+              
+              function actualizarMonto() {
+                if (!esEdicion || !campoMonto.value) { 
+                  const selectedId = parseInt(selPaquete.value); 
+                  const p = paquetes.find(x => x.id === selectedId); 
+                  campoMonto.value = p ? `${Number(p.precio).toFixed(2)}` : '';
+                }
+              }
+              selPaquete.addEventListener('change', actualizarMonto);
+              document.getElementById('metodo_pago').addEventListener('change', (e) => {
+                document.getElementById('campo_otro_metodo').style.display = e.target.value === 'Otro' ? 'block' : 'none';
+              });
+              document.getElementById('factura_pago').addEventListener('change', (e) => {
+                document.getElementById('campo_num_factura').style.display = e.target.checked ? 'block' : 'none';
+              });
+              actualizarMonto();
+              selMetodoPago.dispatchEvent(new Event('change'));
+            },
+            preConfirm: () => {
+              const fecha_pago = document.getElementById('fecha_pago').value;
+              const paquete_id = document.getElementById('paquete').value;
+              const metodo_pago = document.getElementById('metodo_pago').value;
+              const otro_metodo_pago = document.getElementById('otro_metodo_pago').value;
+              const motivo_descuento = document.getElementById('motivo_descuento').value;
+              const numero_factura = document.getElementById('numero_factura').value;
+              const monto = document.getElementById('monto').value;
+              const factura_pago = document.getElementById('factura_pago').checked;
+
+              if (!paquete_id) { Swal.showValidationMessage('Paquete obligatorio'); return false; }
+              return { fecha_pago, paquete: paquete_id, metodo_pago, otro_metodo_pago, motivo_descuento, factura_pago, numero_factura, monto };
+            }
+          });      
+
+          if (!formValues) return;
+
+          const url = esEdicion ? `/api/pago/editar/${idPago}` : '/api/pagos/nuevo';
+          const bodyPayload = esEdicion ? { ...formValues } : { cliente_id: clienteId, ...formValues }; 
+
+          const respPago = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyPayload)
+          });
+          const dataFinal = await respPago.json();
+
+          if (dataFinal.ok) {
+            await Swal.fire({ icon: 'success', title: 'Guardado', timer: 1500, showConfirmButton: false });
+            if ($.fn.DataTable.isDataTable('#tablaClientesPorVencer')) {
+                 $('#tablaClientesPorVencer').DataTable().ajax.reload(null, false);
+            } else {
+                 location.reload();
+            }
+          } else {
+            Swal.fire('Error', dataFinal.error, 'error');
+          }
+
+      } catch (err) {
+          console.error(">>> [DEBUG] EXCEPCIÓN EN JS:", err);
+          alert("Error inesperado en el modal. Revisa la consola.");
+      }
+    } 
+
+// INICIO DEL DOCUMENT READY
+$(document).ready(function() {
+    let dtClientesPorVencer;
+    
+    function loadTable(server = '', pais = '', month = '') {
+        if ($.fn.DataTable.isDataTable('#tablaClientesPorVencer')) {
+            dtClientesPorVencer.destroy();
+        }
+
+        dtClientesPorVencer = $('#tablaClientesPorVencer').DataTable({
+            processing: true,
+            serverSide: false,
+            ajax: {
+                url: "{{ url_for('api_clientes_por_vencer_dt') }}",
+                type: "GET",
+                data: function (d) { d.server = server; d.pais = pais; d.month = month; },
+                dataSrc: 'data'
+            },
+            order: [[9, 'asc']], 
+            pageLength: 25,
+            
+            // 🛑 FIX CORS: IDIOMA INTEGRADO (SIN DESCARGA EXTERNA) 🛑
+            language: {
+                "decimal": "",
+                "emptyTable": "No hay datos disponibles en la tabla",
+                "info": "Mostrando _START_ a _END_ de _TOTAL_ entradas",
+                "infoEmpty": "Mostrando 0 a 0 de 0 entradas",
+                "infoFiltered": "(filtrado de _MAX_ entradas totales)",
+                "infoPostFix": "",
+                "thousands": ",",
+                "lengthMenu": "Mostrar _MENU_ entradas",
+                "loadingRecords": "Cargando...",
+                "processing": "Procesando...",
+                "search": "Buscar:",
+                "zeroRecords": "No se encontraron registros coincidentes",
+                "paginate": {
+                    "first": "Primero",
+                    "last": "Último",
+                    "next": "Siguiente",
+                    "previous": "Anterior"
+                },
+                "aria": {
+                    "sortAscending": ": activar para ordenar la columna ascendente",
+                    "sortDescending": ": activar para ordenar la columna descendente"
+                }
+            },
+
+            columns: [
+                { data: 'id_gumi', className: 'text-center' },
+                { data: 'server', className: 'text-center' },
+                { data: 'pais', className: 'text-center' },
+                { 
+                    data: 'negocio',
+                    render: function(data, type, row) {
+                        const urlDetalle = "{{ url_for('cliente_detalle', cliente_id=0) }}".replace('0', row.id);
+                        return `<a href="${urlDetalle}" class="fw-bold text-primary">${data}</a>`;
+                    }
+                },
+                { data: 'nombre_contacto' },
+                { data: 'telefonos_display', className: 'text-start', orderable: false }, 
+                { 
+                    data: 'status', 
+                    className: 'text-center',
+                    render: function(data, type, row) {
+                        const statusActual = data || 'Activo';
+                        let optionsHtml = '';
+                        ALL_STATUSES.forEach(status => {
+                            const selected = (status === statusActual) ? 'selected' : '';
+                            optionsHtml += `<option value="${status}" ${selected}>${status}</option>`;
+                        });
+                        return `<select class="form-select form-select-sm status-changer status-select" data-id="${row.id}">${optionsHtml}</select>`;
+                    }
+                },
+                { data: 'paquete_nombre' },
+                { data: 'vence_en_display', className: 'text-center' }, 
+                { data: 'vence_en_orden', visible: false }, 
+                {
+                    data: 'id',
+                    className: 'text-center',
+                    orderable: false,
+                    render: function(id) {
+                        return `<button class="btn btn-sm btn-success btn-agregar-pago" data-id="${id}"><i class="fa-solid fa-coins me-1"></i> PAGO</button>`;
+                    }
+                }
+            ]
+        });
+    }
+
+    loadTable('', '', ''); 
+
+    $('#filtroServer, #filtroPais, #filtroMonth').on('change', function() { 
+        loadTable($('#filtroServer').val(), $('#filtroPais').val(), $('#filtroMonth').val());
+    });
+
+    $('#btn_reset_filtros').on('click', function() { 
+        $('#filtroServer, #filtroPais, #filtroMonth').val('');
+        loadTable('', '', ''); 
+    });
+
+    // 🛑 LISTENER DELEGADO PARA EL BOTÓN DE PAGO 🛑
+    $(document).on('click', '.btn-agregar-pago', function(e) {
+        e.preventDefault();
+        const id = $(this).data('id');
+        if (id) abrirModalPago(id);
+    });
+
+    // LISTENER STATUS
+    $('#tablaClientesPorVencer').on('change', '.status-changer', async function() {
+        const select = $(this);
+        const clienteId = select.data('id');
+        const nuevoStatus = select.val();
+        try {
+            const resp = await fetch(`/api/clientes/${clienteId}/status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: nuevoStatus })
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                const toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2000 });
+                toast.fire({ icon: 'success', title: 'Status actualizado' });
+            } else {
+                Swal.fire('Error', data.error || 'No se pudo actualizar status', 'error');
+                loadTable();
+            }
+        } catch (e) {
+            Swal.fire('Error', 'Error de conexión', 'error');
+            loadTable();
+        }
+    });
+});
+</script>
+{% endblock %}
