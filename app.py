@@ -2,7 +2,6 @@ from flask import Flask, render_template, request, redirect, url_for, send_file,
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.utils import secure_filename
-import pandas as pd
 
 import io
 import traceback
@@ -60,8 +59,16 @@ app.jinja_env.globals.update(format_currency=format_currency)
 
 # 🔹 Configuración de base de datos (guarda database.db en la raíz del proyecto)
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'database.db')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
+# 🔹 Configuración de base de datos
+# 1. Usa la variable de entorno DATABASE_URL (para Render/PostgreSQL)
+# 2. Si no existe (entorno local), usa SQLite ('sqlite:///database.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///' + os.path.join(basedir, 'database.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False 
+
+# La línea 'basedir = os.path.abspath(os.path.dirname(__file__))' que ya tenías
+# puede ser movida o dejada, pero es menos crítica ahora que priorizamos la URL de entorno.
 
 # 🛑 1. DEFINICIÓN DE DB (PRIMERO)
 db = SQLAlchemy(app)
