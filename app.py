@@ -16,7 +16,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import or_, extract, func, desc, and_, distinct
 from decimal import Decimal
 import locale # Para formato de moneda
-import numpy as np # Para manejar nulos de pandas
 
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField, SelectField
