@@ -1,3 +1,6 @@
+from app import app
+from flask_migrate import Migrate
+
 import logging
 from logging.config import fileConfig
 
@@ -110,4 +113,8 @@ def run_migrations_online():
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    run_migrations_online()
+    # 🛑 INICIO DE LA CORRECCIÓN 🛑
+    # Usamos app.app_context() para que current_app y la base de datos sean accesibles
+    with app.app_context():
+        run_migrations_online()
+    # 🛑 FIN DE LA CORRECCIÓN 🛑
