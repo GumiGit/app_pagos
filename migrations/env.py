@@ -2,6 +2,8 @@ import logging
 from logging.config import fileConfig
 
 # === CORRECCIÓN DE RUTA Y CONTEXTO ===
+# === FORZANDO EL COMMIT FINAL ===
+# El archivo está limpio de sintaxis.
 import os
 import sys
 from pathlib import Path
