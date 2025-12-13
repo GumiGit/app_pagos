@@ -1,4 +1,4 @@
-from app import app
+from app import app, db
 from flask_migrate import Migrate
 
 import logging
@@ -6,6 +6,8 @@ from logging.config import fileConfig
 
 from flask import current_app
 
+import os
+import sys
 from alembic import context
 
 # this is the Alembic Config object, which provides
