@@ -1,13 +1,23 @@
-from app import app, db
-from flask_migrate import Migrate
-
 import logging
 from logging.config import fileConfig
 
-from flask import current_app
-
+# === 1. IMPORACIONES DE LA APLICACIÓN Y CORRECCIÓN DE RUTA ===
 import os
 import sys
+from pathlib import Path
+
+# Configuración crítica para que Alembic pueda importar 'app.py'
+# Añade el directorio padre (la raíz del proyecto) al path de Python
+MIGRATIONS_DIR = Path(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(str(MIGRATIONS_DIR.parent))
+
+# Ahora importamos la aplicación (Esto fallaba antes de la corrección de ruta)
+# Asegúrate de que 'db' se use si la defines globalmente en app.py
+from app import app, db
+from flask_migrate import Migrate
+# ===============================================================
+
+from flask import current_app
 from alembic import context
 
 # this is the Alembic Config object, which provides
@@ -115,8 +125,16 @@ def run_migrations_online():
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    # 🛑 INICIO DE LA CORRECCIÓN 🛑
-    # Usamos app.app_context() para que current_app y la base de datos sean accesibles
+    # 🛑 La corrección de contexto de Flask ahora funciona gracias al sys.path
     with app.app_context():
         run_migrations_online()
-    # 🛑 FIN DE LA CORRECCIÓN 🛑
+```
+
+### **Paso 25: Despliegue Final**
+
+1.  **Guarda el archivo `migrations/env.py` con el código corregido.**
+2.  **Sube los cambios a GitHub:**
+    ```bash
+    git add .
+    git commit -m "fix: Final Alembic import fix (sys.path correction) in env.py"
+    git push origin main
