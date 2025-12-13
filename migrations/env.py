@@ -86,12 +86,3 @@ if context.is_offline_mode():
 else:
     with app.app_context():
         run_migrations_online()
-```
-
-
-1.  **Guarda el archivo `migrations/env.py` con el código corregido.**
-2.  **Sube los cambios a GitHub:**
-    ```bash
-    git add .
-    git commit -m "fix: Final Alembic import fix (sys.path correction) in env.py"
-    git push origin main
