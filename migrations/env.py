@@ -1,41 +1,29 @@
 import logging
 from logging.config import fileConfig
 
-# === 1. IMPORACIONES DE LA APLICACIÓN Y CORRECCIÓN DE RUTA ===
 import os
 import sys
 from pathlib import Path
 
-# Configuración crítica para que Alembic pueda importar 'app.py'
-# Añade el directorio padre (la raíz del proyecto) al path de Python
 MIGRATIONS_DIR = Path(os.path.abspath(os.path.dirname(__file__)))
 sys.path.append(str(MIGRATIONS_DIR.parent))
 
-# Ahora importamos la aplicación (Esto fallaba antes de la corrección de ruta)
-# Asegúrate de que 'db' se use si la defines globalmente en app.py
 from app import app, db
 from flask_migrate import Migrate
-# ===============================================================
 
 from flask import current_app
 from alembic import context
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
 fileConfig(config.config_file_name)
 logger = logging.getLogger('alembic.env')
 
 
 def get_engine():
     try:
-        # this works with Flask-SQLAlchemy<3 and Alchemical
         return current_app.extensions['migrate'].db.get_engine()
     except (TypeError, AttributeError):
-        # this works with Flask-SQLAlchemy>=3
         return current_app.extensions['migrate'].db.engine
 
 
@@ -46,18 +34,9 @@ def get_engine_url():
     except AttributeError:
         return str(get_engine().url).replace('%', '%%')
 
-
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
 config.set_main_option('sqlalchemy.url', get_engine_url())
 target_db = current_app.extensions['migrate'].db
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
 
 
 def get_metadata():
@@ -95,9 +74,6 @@ def run_migrations_online():
 
     """
 
-    # this callback is used to prevent an auto-migration from being generated
-    # when there are no changes to the schema
-    # reference: http://alembic.zzzcomputing.com/en/latest/cookbook.html
     def process_revision_directives(context, revision, directives):
         if getattr(config.cmd_opts, 'autogenerate', False):
             script = directives[0]
@@ -125,12 +101,10 @@ def run_migrations_online():
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    # 🛑 La corrección de contexto de Flask ahora funciona gracias al sys.path
     with app.app_context():
         run_migrations_online()
 ```
 
-### **Paso 25: Despliegue Final**
 
 1.  **Guarda el archivo `migrations/env.py` con el código corregido.**
 2.  **Sube los cambios a GitHub:**
