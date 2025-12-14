@@ -4,6 +4,7 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from werkzeug.utils import secure_filename
 from flask_migrate import Migrate
 
+# =========== INICIO DE IMPORTS EXTERNOS Y DE SISTEMA ===========
 import io
 import traceback
 import re 
@@ -11,16 +12,18 @@ from datetime import date, datetime, timedelta # datetime.datetime es redundante
 from dateutil.relativedelta import relativedelta
 import calendar
 import os
+import pandas as pd # <-- ¡ESTA ES LA LÍNEA QUE FALTABA!
+from decimal import Decimal # Asegura que Decimal esté siempre disponible
 
 from werkzeug.security import generate_password_hash, check_password_hash
 # 🛑 FIX 1: AGREGAR 'distinct' a la importación de sqlalchemy
 from sqlalchemy import or_, extract, func, desc, and_, distinct
-from decimal import Decimal
-import locale # Para formato de moneda
+# import locale # Para formato de moneda # Ya está importado correctamente después.
 
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField, SelectField
 from wtforms.validators import DataRequired, Email, Length, Optional
+
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
