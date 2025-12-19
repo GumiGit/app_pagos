@@ -8,30 +8,35 @@ from flask_migrate import Migrate
 import io
 import traceback
 import re 
-from datetime import date, datetime, timedelta # datetime.datetime es redundante si se importa así
+from datetime import date, datetime, timedelta 
 from dateutil.relativedelta import relativedelta
 import calendar
 import os
-import pandas as pd # <-- ¡ESTA ES LA LÍNEA QUE FALTABA!
-from decimal import Decimal # Asegura que Decimal esté siempre disponible
 
+# Librerías de terceros
+import pandas as pd
+from decimal import Decimal 
+import locale # <-- Importación del módulo de localización
+
+# Librerías de seguridad y base de datos
 from werkzeug.security import generate_password_hash, check_password_hash
-# 🛑 FIX 1: AGREGAR 'distinct' a la importación de sqlalchemy
-from sqlalchemy import or_, extract, func, desc, and_, distinct
-# import locale # Para formato de moneda # Ya está importado correctamente después.
+from sqlalchemy import or_, extract, func, desc, and_, distinct, BigInteger # BigInteger añadido aquí
 
+# Forms (WTForms)
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField, SelectField
 from wtforms.validators import DataRequired, Email, Length, Optional
 
-
+# Configuración de Logging
 import logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# Inicialización de la aplicación
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'un_secreto_muy_largo_y_dificil_de_adivinar_para_la_sesion') 
 
+# Configuración del Locale
 try:
     locale.setlocale(locale.LC_ALL, 'es_MX.UTF-8')
 except locale.Error:
@@ -39,6 +44,8 @@ except locale.Error:
         locale.setlocale(locale.LC_ALL, 'es_ES.UTF8')
     except locale.Error:
         print("Advertencia: No se pudo configurar locale.LC_ALL para español.")
+
+# ... El resto de tu configuración y modelos ...
 
 # Función de utilidad para formatear moneda (usando Decimal)
 def format_currency(value, moneda='MXN'):
@@ -75,7 +82,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # 🛑 1. DEFINICIÓN DE DB (PRIMERO)
 db = SQLAlchemy(app)
-migrate = Migrate(app, db)
+migrate = Migrate(app, db, render_as_batch=True, compare_type=True)
 
 # ========== Login ==========
 login_manager = LoginManager()
@@ -101,7 +108,8 @@ class User(UserMixin, db.Model):
 # NUEVO MODELO: Transacciones Bancarias (Para conciliación)
 # 🛑 CRÍTICO: Esta clase ahora existe antes de que se use en las rutas
 class BankTransaction(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
+    # CRÍTICO: Cambiado a BigInteger para soportar IDs negativos grandes (timestamps)
+    id = db.Column(db.BigInteger, primary_key=True) 
     date = db.Column(db.Date, nullable=False)
     concept = db.Column(db.String(255), nullable=False)
     debit = db.Column(db.Numeric(10, 2), nullable=True) 
@@ -137,7 +145,8 @@ class Pago(db.Model):
     paquete_precio = db.relationship('PaquetePrecio', backref='pagos_detalle', lazy=True)
 
     # Vínculo con la Transacción Bancaria para Conciliación
-    bank_transaction_id = db.Column(db.Integer, db.ForeignKey('bank_transaction.id'), nullable=True, unique=True)
+    # Ahora que BankTransaction.id es BigInteger, esta clave foránea funciona correctamente
+    bank_transaction_id = db.Column(db.BigInteger, db.ForeignKey('bank_transaction.id'), nullable=True, unique=True)
     bank_transaction = db.relationship('BankTransaction', backref='pago', uselist=False)
 
 class Cliente(db.Model):
@@ -276,7 +285,7 @@ def formatear_fecha_jinja(value):
             return '—' # No es un formato de fecha válido
             
     # Formato deseado: día/mes/año (ej: 19/11/25)
-    return value.strftime('%d/%m/%y')   
+    return value.strftime('%d/%m/%y')    
 
 app.jinja_env.filters['formatearFecha'] = formatear_fecha_jinja
 
@@ -878,8 +887,8 @@ def api_usuarios_dt():
         'id': u.id,
         'username': u.username,
         'full_name': u.full_name, # 🛑 Campo nuevo
-        'email': u.email,          # 🛑 Campo nuevo
-        'role': u.role             # 🛑 Campo nuevo
+        'email': u.email,         # 🛑 Campo nuevo
+        'role': u.role            # 🛑 Campo nuevo
     } for u in usuarios]
     return jsonify({"data": data})
 
@@ -1166,7 +1175,7 @@ def api_clientes_demo_dt():
                 
                 # Enviamos ambas versiones:
                 "vence_en": vence_en_display,         # Lo que ve el usuario
-                "vence_en_orden": vence_en_orden       # Dato oculto para ordenar correctamente
+                "vence_en_orden": vence_en_orden         # Dato oculto para ordenar correctamente
             })
 
         return jsonify({"data": rows})
@@ -1618,6 +1627,8 @@ def clientes_importar():
                     flash(f"⚠️ Advertencia: Se cargaron {conteo_exitoso}/{conteo_total} clientes. Hubo {len(errores)} errores. Revise la lista.", 'warning')
                     for err in errores:
                         print(f"ERROR DE CARGA: {err}")
+
+                return redirect(url_for('clientes_importar'))
 
             except Exception as e:
                 db.session.rollback()
@@ -2143,12 +2154,12 @@ def api_nuevo_pago():
     db.session.add(pago)
 
     # 4. ACTUALIZAR AL CLIENTE (para "último pago")
-    cliente.fecha_pago             = fecha_pago
-    cliente.metodo_pago          = metodo_pago
-    cliente.otro_metodo_pago     = otro_metodo
-    cliente.factura_pago         = factura_pago
-    cliente.numero_factura       = numero_factura
-    cliente.motivo_descuento     = motivo_descuento
+    cliente.fecha_pago              = fecha_pago
+    cliente.metodo_pago           = metodo_pago
+    cliente.otro_metodo_pago      = otro_metodo
+    cliente.factura_pago          = factura_pago
+    cliente.numero_factura        = numero_factura
+    cliente.motivo_descuento      = motivo_descuento
 
     # 5. ACTUALIZAR LA SUSCRIPCIÓN
 
@@ -3560,7 +3571,7 @@ def api_paquetes_by_country():
 
 @app.route('/api/conciliar_transaccion/<int:transaccion_id>', methods=['POST'])
 @login_required
-@role_required(ROLES_MODIFICACION) # ADMIN o SUPERADMIN
+@role_required(ROLES_MODIFICACION)
 def api_conciliar_transaccion(transaccion_id):
     """
     Realiza la conciliación: crea un Pago y marca la BankTransaction como conciliada.
