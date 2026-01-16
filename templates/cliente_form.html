@@ -642,6 +642,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (paqueteSelect) {
     paqueteSelect.addEventListener('change', () => {
         sincronizarVigencia(true); 
+        obtenerPrecio(); // <--- AGREGAR ESTA LÍNEA
     });
   }
 
@@ -719,6 +720,70 @@ document.addEventListener('DOMContentLoaded', () => {
   
   const optsNequi = document.querySelectorAll('#metodo_pago option[data-colombia]');
   if(optsNequi && paisSelect) { const esCol = (paisSelect.value||'').toUpperCase()==='COLOMBIA'; optsNequi.forEach(o => o.hidden=!esCol); }
+
+  // 🛑 LÓGICA DE VALIDACIÓN DE MAIL DUPLICADO 🛑
+  form.addEventListener('submit', async (e) => {
+    // Si ya validamos o estamos en modo edición, no interrumpir
+    if (form.dataset.validated === 'true' || MODO_EDICION) {
+      return; 
+    }
+
+    e.preventDefault(); // Detenemos el envío inicial
+
+    const emailInput = document.querySelector('input[name="mail"]');
+    const email = emailInput ? emailInput.value.trim() : '';
+
+    if (!email) {
+      form.dataset.validated = 'true';
+      form.submit();
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/clientes/verificar_mail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email })
+      });
+      
+      const res = await response.json();
+
+      if (res.existe) {
+        // El mail existe, mostramos la advertencia con SweetAlert
+        const result = await Swal.fire({
+          title: '¡Mail Duplicado!',
+          html: `El correo <b>${email}</b> ya pertenece a:<br><br>
+                 <strong class="text-danger">${res.negocio}</strong><br>
+                 <small>Contacto: ${res.contacto}</small><br><br>
+                 ¿Deseas registrar este nuevo negocio con el mismo correo?`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonColor: '#28a745',
+          cancelButtonColor: '#dc3545',
+          confirmButtonText: 'Sí, continuar guardando',
+          cancelButtonText: 'No, cancelar y revisar',
+          reverseButtons: true
+        });
+
+        if (result.isConfirmed) {
+          // El usuario decidió ignorar la alerta
+          form.dataset.validated = 'true';
+          form.submit();
+        }
+        // Si cancela, no hacemos nada y el formulario se queda abierto
+      } else {
+        // No hay duplicados, enviamos normalmente
+        form.dataset.validated = 'true';
+        form.submit();
+      }
+    } catch (err) {
+      console.error("Error validando mail ESD:", err);
+      // Si el API falla, mejor dejar que guarde para no bloquear al usuario
+      form.dataset.validated = 'true';
+      form.submit();
+    }
+  });
+  
 });
 </script>
 {% endblock %}

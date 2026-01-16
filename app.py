@@ -71,14 +71,16 @@ app.jinja_env.globals.update(format_currency=format_currency)
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 
-# 🔹 Configuración de base de datos
-# 1. Usa la variable de entorno DATABASE_URL (para Render/PostgreSQL)
-# 2. Si no existe (entorno local), usa SQLite ('sqlite:///database.db')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///' + os.path.join(basedir, 'database.db')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False 
+database_url = os.environ.get('DATABASE_URL') or 'sqlite:///' + os.path.join(basedir, 'database.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# La línea 'basedir = os.path.abspath(os.path.dirname(__file__))' que ya tenías
-# puede ser movida o dejada, pero es menos crítica ahora que priorizamos la URL de entorno.
+# 🛑 PARCHE DE COMPATIBILIDAD ESD 🛑
+# Desactiva 'RETURNING' solo si estamos usando SQLite para evitar el error de ID
+if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        "implicit_returning": False,
+    }
 
 # 🛑 1. DEFINICIÓN DE DB (PRIMERO)
 db = SQLAlchemy(app)
@@ -105,22 +107,18 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-# NUEVO MODELO: Transacciones Bancarias (Para conciliación)
-# 🛑 CRÍTICO: Esta clase ahora existe antes de que se use en las rutas
 class BankTransaction(db.Model):
-    # CRÍTICO: Cambiado a BigInteger para soportar IDs negativos grandes (timestamps)
-    id = db.Column(db.BigInteger, primary_key=True) 
+    __tablename__ = 'bank_transaction'
+    id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.Date, nullable=False)
-    concept = db.Column(db.String(255), nullable=False)
-    debit = db.Column(db.Numeric(10, 2), nullable=True) 
-    credit = db.Column(db.Numeric(10, 2), nullable=True)
-    total_balance = db.Column(db.Numeric(10, 2), nullable=True)
+    concept = db.Column(db.String(255))
+    debit = db.Column(db.Float, default=0.0)
+    credit = db.Column(db.Float, default=0.0)
+    total_balance = db.Column(db.Float, default=0.0)
     is_conciliated = db.Column(db.Boolean, default=False)
-    
-    # 🛑 NUEVAS COLUMNAS para Pre-Conciliación Sucursal (NO se usaba Pago en la conciliacion_list)
-    status = db.Column(db.String(50), default='PENDIENTE')
-    negocio_conciliado = db.Column(db.String(255), nullable=True) # Guarda nombres de negocios/sucursales
-    num_factura_conciliado = db.Column(db.String(50), nullable=True) # Guarda el número de factura
+    status = db.Column(db.String(50), default='PENDIENTE') # Deja solo una
+    negocio_conciliado = db.Column(db.String(255), nullable=True)
+    num_factura_conciliado = db.Column(db.String(50), nullable=True)
 
 class Pago(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -144,8 +142,6 @@ class Pago(db.Model):
     paquete_precio_id = db.Column(db.Integer, db.ForeignKey('paquete_precio.id'), nullable=True)
     paquete_precio = db.relationship('PaquetePrecio', backref='pagos_detalle', lazy=True)
 
-    # Vínculo con la Transacción Bancaria para Conciliación
-    # Ahora que BankTransaction.id es BigInteger, esta clave foránea funciona correctamente
     bank_transaction_id = db.Column(db.BigInteger, db.ForeignKey('bank_transaction.id'), nullable=True, unique=True)
     bank_transaction = db.relationship('BankTransaction', backref='pago', uselist=False)
 
@@ -300,35 +296,46 @@ def ultimo_dia_mes(d: date) -> date:
 def calcular_fechas_vigencia(fecha_inicio: date, vigencia: str) -> tuple[date, date]:
     """
     Calcula fechas respetando las dos lógicas de negocio:
-    1. DEMO: 15 días naturales exactos. Pago al día siguiente.
-    2. PERIODOS (Mensual, Trimestral, etc): Alinear a FIN DE MES calendario.
+    1. DEMO: 15 días naturales exactos.
+    2. PERIODOS: Siempre al ÚLTIMO DÍA del mes correspondiente.
     """
+    import calendar
+    from dateutil.relativedelta import relativedelta
+
     vig = (vigencia or "").upper().strip()
     
     if not fecha_inicio:
         fecha_inicio = date.today()
 
     # --- CASO 1: DEMO (15 Días Naturales) ---
-    # Prioridad absoluta: si dice DEMO, son 15 días.
     if "DEMO" in vig:
         vence_en = fecha_inicio + timedelta(days=15)
         proximo_pago = vence_en + timedelta(days=1)
         return vence_en, proximo_pago
 
     # --- CASO 2: PERIODOS ALINEADOS A FIN DE MES ---
-    meses_map = {
-        "MENSUAL": 1, 
-        "TRIMESTRAL": 3, 
-        "SEMESTRAL": 6, 
-        "ANUAL": 12
+    # REGLA: 
+    # Mensual: Fin del mismo mes.
+    # Trimestral: Fin del mes + 2 (total 3 meses).
+    meses_a_sumar = {
+        "MENSUAL": 0,    # Se queda en el mes actual
+        "TRIMESTRAL": 2, # Salta 2 meses adelante
+        "SEMESTRAL": 5,  # Salta 5 meses adelante
+        "ANUAL": 11      # Salta 11 meses adelante
     }
-    duracion = meses_map.get(vig, 1)
-
-    # Lógica: Mes Inicio + (Duración - 1) -> Fin de ese mes
-    fecha_objetivo = fecha_inicio + relativedelta(months=duracion - 1)
-    ultimo_dia_mes = calendar.monthrange(fecha_objetivo.year, fecha_objetivo.month)[1]
     
-    vence_en = date(fecha_objetivo.year, fecha_objetivo.month, ultimo_dia_mes)
+    delta_meses = meses_a_sumar.get(vig, 0)
+
+    # 1. Calculamos el mes objetivo
+    fecha_objetivo = fecha_inicio + relativedelta(months=delta_meses)
+    
+    # 2. Obtenemos el último día de ese mes objetivo
+    # calendar.monthrange devuelve (dia_semana, ultimo_dia)
+    ultimo_dia = calendar.monthrange(fecha_objetivo.year, fecha_objetivo.month)[1]
+    
+    vence_en = date(fecha_objetivo.year, fecha_objetivo.month, ultimo_dia)
+    
+    # 3. El próximo pago es el día 1 del mes siguiente
     proximo_pago = vence_en + timedelta(days=1)
     
     return vence_en, proximo_pago
@@ -478,53 +485,6 @@ CATALOGO_USO_CFDI = [
     ("CP01", "Pagos"),
     ("CN01", "Nómina"),
 ]
-
-def actualizar_suscripcion_cliente(cliente_id):
-    """
-    Recalcula las fechas de la Suscripcion del cliente basándose 
-    en el último Pago con status='ACTIVO' (ignorando 'CANCELADO').
-    """
-    suscripcion = Suscripcion.query.filter_by(cliente_id=cliente_id).first()
-    cliente = Cliente.query.get(cliente_id) # ⬅️ Necesitamos el objeto Cliente
-    if not suscripcion or not cliente:
-        return
-
-    # 🛑 PASO 1: Encontrar el último pago ACTIVO
-    ultimo_pago_valido = Pago.query.filter_by(
-        cliente_id=cliente_id,
-        status='ACTIVO' 
-    ).order_by(Pago.fecha_pago.desc()).first()
-
-    if ultimo_pago_valido:
-        vigencia_str = ultimo_pago_valido.vigencia
-        
-        # ⚠️ LÓGICA DE CÁLCULO DE DÍAS (Ajustada para usar solo string)
-        dias_a_sumar = 0
-        if vigencia_str:
-            if "MENSUAL" in vigencia_str.upper():
-                dias_a_sumar = 30 
-            elif "ANUAL" in vigencia_str.upper():
-                dias_a_sumar = 365
-        
-        # Recalcular la fecha de vencimiento
-        nueva_fecha_vence = ultimo_pago_valido.fecha_pago + timedelta(days=dias_a_sumar)
-            
-        # 🛑 ACTUALIZAR SUSCRIPCION (Fechas de vigencia)
-        suscripcion.paquete = ultimo_pago_valido.paquete 
-        suscripcion.proximo_pago = nueva_fecha_vence 
-        suscripcion.vence_en = nueva_fecha_vence 
-        suscripcion.status = 'Activo'
-        cliente.fecha_pago = ultimo_pago_valido.fecha_pago 
-            
-    else:
-        # Si no hay pagos ACTIVOS, se resetea todo a None/Suspendido
-        suscripcion.proximo_pago = None
-        suscripcion.vence_en = None
-        suscripcion.paquete = None
-        suscripcion.status = 'Suspendido'
-        cliente.fecha_pago = None 
-
-    db.session.commit()
 
 @app.route('/paquetes_precios')
 @login_required
@@ -809,9 +769,10 @@ def logout():
 # ========== Ejemplos básicos ==========
 @app.route('/')
 @login_required
+@role_required(ROLES_LECTURA)
 def index():
-    registros = Pago.query.all()
-    return render_template('index.html', registros=registros)
+    # Directo y sin intermediarios
+    return render_template('index.html')
 
 @app.route('/form', methods=['GET', 'POST'])
 @login_required
@@ -820,7 +781,15 @@ def form():
         nombre = request.form['nombre']
         correo = request.form['correo']
         monto = request.form['monto']
-        nuevo_pago = Pago(nombre=nombre, correo=correo, monto=float(monto))
+        
+        # 🟢 CORRECCIÓN ESD: bank_transaction_id=None asegura que nazca PENDIENTE
+        nuevo_pago = Pago(
+            nombre=nombre, 
+            correo=correo, 
+            monto=float(monto),
+            bank_transaction_id=None  # <--- CLAVE PARA EL PROTOCOLO ESD
+        )
+        
         db.session.add(nuevo_pago)
         db.session.commit()
         flash("Registro guardado correctamente")
@@ -834,7 +803,15 @@ def form_privado():
         nombre = request.form['nombre']
         correo = request.form['correo']
         monto = request.form['monto']
-        nuevo_pago = Pago(nombre=nombre, correo=correo, monto=float(monto))
+        
+        # 🟢 CORRECCIÓN ESD: bank_transaction_id=None asegura que nazca PENDIENTE
+        nuevo_pago = Pago(
+            nombre=nombre, 
+            correo=correo, 
+            monto=float(monto),
+            bank_transaction_id=None  # <--- CLAVE PARA EL PROTOCOLO ESD
+        )
+        
         db.session.add(nuevo_pago)
         db.session.commit()
         flash("Registro privado guardado correctamente")
@@ -854,13 +831,9 @@ def descargar():
 
 @app.route('/dashboard')
 @login_required
-@role_required(ROLES_LECTURA)
 def dashboard():
-    pagos = Pago.query.all()
-    total = sum(p.monto for p in pagos)
-    cantidad = len(pagos)
-    now = datetime.now()
-    return render_template('dashboard.html', total=total, cantidad=cantidad, pagos=pagos, now=now)
+    # Si alguien escribe /dashboard, lo mandamos al index oficial
+    return redirect(url_for('index'))
 
 
 
@@ -1058,130 +1031,6 @@ def clientes_list():
         clientes=clientes,
         current_date=today
     )
-
-# app.py
-
-# ==========================================
-# 1. RUTA PRINCIPAL: Clientes DEMO
-# ==========================================
-@app.route('/clientes/demo')
-@login_required
-def clientes_demo_list():
-    # Reutilizamos la lógica para obtener países y paquetes para filtros
-    precios_db = PaquetePrecio.query.all()
-    paises_db_set = {p.pais for p in precios_db if p.pais}
-    
-    # Pre-cargar países para el filtro de la vista
-    orden_paises = ["MÉXICO", "COLOMBIA", "LATAM"]
-    paises = [p for p in orden_paises if p in paises_db_set]
-    for p in paises_db_set:
-        if p not in paises: paises.append(p)
-    if not paises: paises = ["MÉXICO", "COLOMBIA", "LATAM"]
-
-    return render_template(
-        'clientes_demo_list.html', # ⬅️ Nuevo archivo HTML
-        paises=paises
-    )
-
-
-@app.route('/api/clientes_demo_dt')
-@login_required
-def api_clientes_demo_dt():
-    from datetime import date
-    from sqlalchemy import select, outerjoin, or_, and_
-
-    today = date.today()
-
-    # 1. Consulta
-    stmt = (
-        select(
-            Cliente.id,
-            Cliente.negocio,
-            Cliente.nombre_contacto,
-            Cliente.mail,
-            Cliente.pais,
-            Cliente.status_cliente,
-            Cliente.telefono,
-            Cliente.telefono_secundario_1,
-            Cliente.telefono_secundario_2,
-            Cliente.telefono_secundario_3,
-            Suscripcion.id_gumi,
-            Suscripcion.server,
-            Suscripcion.paquete,
-            Suscripcion.status,
-            Suscripcion.vence_en
-        )
-        .select_from(outerjoin(Cliente, Suscripcion, Cliente.id == Suscripcion.cliente_id))
-        .where(
-            or_(
-                Suscripcion.paquete.ilike('%Demo%'),
-                and_(
-                    Suscripcion.id.is_(None),
-                    Cliente.status_cliente.ilike('%En prueba%')
-                )
-            )
-        )
-        .order_by(Cliente.negocio.asc())
-    )
-    
-    try:
-        results = db.session.execute(stmt).all()
-        
-        # 2. Diccionario para meses en español
-        meses_abbr = {
-            1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
-            7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"
-        }
-        
-        rows = []
-        for row in results:
-            (
-                cid, negocio, nombre_contacto, mail, pais, status_cliente, tel, tel1, tel2, tel3, 
-                id_gumi, server, paquete, status_sus, vence_en
-            ) = row
-
-            status = status_sus or status_cliente or "En prueba"
-            paquete_display = paquete or "N/A (Lead)"
-
-            # Formato de teléfonos
-            telefonos_html = ''
-            if tel: 
-                telefonos_html += f'<div class="mb-1"><a href="https://wa.me/{tel}" target="_blank" class="fw-bold text-success text-decoration-none"><i class="fa-brands fa-whatsapp"></i> {tel}</a></div>'
-            if tel1: telefonos_html += f'<div class="small text-muted">{tel1}</div>'
-            if tel2: telefonos_html += f'<div class="small text-muted">{tel2}</div>'
-
-            # 3. Formato de Fecha Amigable
-            if vence_en:
-                dia = vence_en.day
-                mes = meses_abbr.get(vence_en.month, "")
-                anio = vence_en.year
-                vence_en_display = f"{dia} {mes} {anio}" # Ej: 30 nov 2025
-                vence_en_orden = vence_en.isoformat()    # Ej: 2025-11-30 (para ordenar)
-            else:
-                vence_en_display = "—"
-                vence_en_orden = "9999-12-31"
-
-            rows.append({
-                "id": cid,
-                "id_gumi": id_gumi or "—",
-                "server": server or "—",
-                "pais": pais or "—",
-                "status": status,
-                "negocio": negocio,
-                "nombre_contacto": nombre_contacto,
-                "mail": mail or "—",
-                "paquete": paquete_display,
-                "telefonos_display": telefonos_html,
-                
-                # Enviamos ambas versiones:
-                "vence_en": vence_en_display,         # Lo que ve el usuario
-                "vence_en_orden": vence_en_orden         # Dato oculto para ordenar correctamente
-            })
-
-        return jsonify({"data": rows})
-
-    except Exception as e:
-        return jsonify({"data": [], "error": "Error interno"}), 500
     
 
 # ==========================================
@@ -1284,7 +1133,7 @@ def clientes_nuevo():
                     numero_whatsapp=cliente.telefono,
                     monto=monto,
                     fecha_pago=fecha_pago,
-                    bank_transaction_id=manual_unique_id_fallback, # Usamos el ID único negativo
+                    bank_transaction_id=None,
                     metodo_pago=request.form.get('metodo_pago'),
                     otro_metodo_pago=request.form.get('otro_metodo_pago'),
                     factura_pago=(request.form.get('factura_pago') == 'on'),
@@ -1410,7 +1259,7 @@ def clientes_editar(id):
                     numero_whatsapp=cliente.telefono,
                     monto=monto,
                     fecha_pago=fecha_pago,
-                    bank_transaction_id=manual_unique_id_fallback, # Usamos el ID único negativo
+                    bank_transaction_id=None,
                     metodo_pago=metodo_pago_enviado,
                     otro_metodo_pago=request.form.get('otro_metodo_pago'),
                     factura_pago=(request.form.get('factura_pago') == 'on'),
@@ -1601,7 +1450,7 @@ def clientes_importar():
                                   numero_whatsapp=cliente.telefono,
                                   monto=monto_pago,
                                   fecha_pago=fecha_pago_cliente,
-                                  bank_transaction_id=manual_unique_id_fallback,
+                                  bank_transaction_id=None,
                                   metodo_pago='Carga Masiva',
                                   paquete=paquete,
                                   vigencia=vigencia,
@@ -1806,7 +1655,7 @@ def api_clientes_dt():
 
     today = date.today()
 
-    # 🔹 Consulta combinada Cliente + Suscripcion
+    # 🔹 Consulta combinada Cliente + Suscripcion (Se agrega Cliente.rfc)
     stmt = (
         select(
             Cliente.id,
@@ -1820,6 +1669,7 @@ def api_clientes_dt():
             Cliente.pais,
             Cliente.status_cliente,
             Cliente.fecha_pago,
+            Cliente.rfc,  # <--- CORRECCIÓN: Agregamos el RFC a la consulta SQL
             Suscripcion.id_gumi,
             Suscripcion.server,
             Suscripcion.paquete,
@@ -1835,30 +1685,23 @@ def api_clientes_dt():
     rows = []
 
     for row in results:
+        # Desempaquetamos incluyendo el nuevo campo rfc
         (
             cid, negocio, nombre_contacto, tel, tel1, tel2, tel3, mail, pais,
-            status_cliente, fecha_pago, id_gumi, server, paquete,
+            status_cliente, fecha_pago, rfc, id_gumi, server, paquete,
             status_sus, proximo_pago, vence_en
         ) = row
 
-        # 🛑 LÓGICA SIMPLIFICADA VIGENTE/VENCIDA INTEGRADA 🛑
-        
+        # Lógica de Vigencia
         status_pago_info = {"status": "SIN SUSCRIPCIÓN", "color": "bg-secondary"}
-        
         if proximo_pago:
             dias = (proximo_pago - today).days
-            
             if dias >= 0:
-                # Si es hoy o futuro
                 status_pago_info = {"status": "VIGENTE", "color": "bg-success"}
             else:
-                # Si la fecha ya pasó
                 status_pago_info = {"status": "VENCIDA", "color": "bg-danger"}
         
-        # -------------------------------------------------------------
-        
         status = status_sus or status_cliente or "Activo"
-        is_eliminado = (status_sus or status_cliente) == 'Eliminado'
 
         rows.append({
             "id": cid,
@@ -1867,6 +1710,7 @@ def api_clientes_dt():
             "pais": pais or "",
             "status": status,
             "negocio": negocio,
+            "rfc": rfc or "--", # <--- CORRECCIÓN: Agregamos el RFC al JSON de salida
             "nombre_contacto": nombre_contacto,
             "telefono": tel or "",
             "tel_sec_1": tel1 or "",
@@ -1880,7 +1724,6 @@ def api_clientes_dt():
         })
 
     return jsonify({"data": rows})
-
 
 @app.route('/pagos')
 @login_required
@@ -1918,27 +1761,24 @@ def api_pagos_dt_global():
     year_filter = request.args.get('year', type=int)
     month_filter = request.args.get('month', type=int)
     
-    # MAPEO DE MONEDAS POR PAÍS (Ajusta esta lista según tus clientes)
     CURRENCY_MAP = {
-        'MÉXICO': 'MXN',
-        'COLOMBIA': 'COP',
-        'PERÚ': 'PEN',
-        'ESTADOS UNIDOS': 'USD',
-        # Agrega otros países/monedas si es necesario
+        'MÉXICO': 'MXN', 'COLOMBIA': 'COP', 'PERÚ': 'PEN', 'ESTADOS UNIDOS': 'USD',
     }
-    DEFAULT_CURRENCY = 'MXN' # Moneda de fallback si no se encuentra ninguna referencia
+    DEFAULT_CURRENCY = 'MXN'
 
     try:
-        # 1. Construir la consulta base
+        # 1. Construir la consulta base (Agregamos Cliente.rfc)
         stmt = (
             select(
                 Pago.id, Pago.fecha_pago, Pago.paquete, Pago.vigencia, Pago.monto, Pago.moneda, Pago.metodo_pago, 
                 Pago.factura_pago, Pago.numero_factura, Pago.motivo_descuento, Pago.status.label('status_pago'), 
+                Pago.bank_transaction_id,
                 
                 Cliente.id.label('cliente_id_for_link'),
                 Cliente.negocio.label('cliente_negocio'),
-                Cliente.pais.label('cliente_pais'), # Dato necesario para el fallback de moneda
+                Cliente.pais.label('cliente_pais'),
                 Cliente.nombre_contacto.label('cliente_contacto'),
+                Cliente.rfc.label('cliente_rfc'), # 🛑 NUEVO: Jalamos el RFC
                 Suscripcion.id_gumi.label('suscripcion_id_gumi'),
                 Suscripcion.server.label('server_info')
             )
@@ -1948,17 +1788,15 @@ def api_pagos_dt_global():
             .order_by(Pago.fecha_pago.desc())
         )
 
-        # 2. Filtros
         if year_filter:
             stmt = stmt.where(extract('year', Pago.fecha_pago) == year_filter)
-        
         if month_filter:
             stmt = stmt.where(extract('month', Pago.fecha_pago) == month_filter)
+
+        stmt = stmt.order_by(Pago.fecha_pago.desc())
         
-        # 3. Ejecutar
         results = db.session.execute(stmt).all()
 
-        # 4. Diccionario de meses en español
         meses_abbr = {
             1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
             7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"
@@ -1966,65 +1804,50 @@ def api_pagos_dt_global():
 
         rows = []
         for r in results:
-            # --- LÓGICA DE MONEDA: Jalar el dato o usar fallback ---
+            # Lógica de moneda
             moneda_final = r.moneda
             if not moneda_final:
-                # Si Pago.moneda es NULL, intentamos inferir del País del Cliente
                 pais_limpio = (r.cliente_pais or '').upper().strip()
                 moneda_final = CURRENCY_MAP.get(pais_limpio, DEFAULT_CURRENCY)
-            # --- FIN LÓGICA DE MONEDA ---
 
+            # Formato de fecha
+            fecha_iso = r.fecha_pago.strftime('%Y-%m-%d') if r.fecha_pago else ""
+            fecha_display = f"{r.fecha_pago.day} {meses_abbr.get(r.fecha_pago.month, '')} {r.fecha_pago.year}" if r.fecha_pago else ""
+            
+            # Enlace al negocio
+            negocio_link = r.cliente_negocio or "Cliente Eliminado"
+            if r.cliente_id_for_link:
+                url_detalle = url_for('cliente_detalle', cliente_id=r.cliente_id_for_link) 
+                negocio_link = f'<a href="{url_detalle}" class="fw-bold text-decoration-none">{r.cliente_negocio}</a>'
+            
+            # 🛑 LIMPIEZA DE MONTO: Enviamos el número puro para que JS lo sume correctamente
+            monto_valor = float(r.monto) if r.monto is not None else 0.0
 
-            # --- FORMATO DE FECHA AMIGABLE ---
-            if r.fecha_pago:
-                dia = r.fecha_pago.day
-                mes = meses_abbr.get(r.fecha_pago.month, "")
-                anio = r.fecha_pago.year
-                fecha_display = f"{dia} {mes} {anio}" # Ej: 30 nov 2025
-                fecha_iso = r.fecha_pago.strftime("%Y-%m-%d") # Ej: 2025-11-30
-            else:
-                fecha_display = ""
-                fecha_iso = ""
-
-            # Formatos auxiliares
-            facturado = "Sí" if r.factura_pago or (r.numero_factura and str(r.numero_factura).strip()) else "No"
-            monto_str = f"{r.monto:,.2f}" if r.monto is not None else "0.00"
-            
-            # Generar enlace al detalle del cliente
-            cliente_id_link = r.cliente_id_for_link 
-            cliente_negocio_display = r.cliente_negocio or "Cliente Eliminado"
-            
-            negocio_link = cliente_negocio_display 
-            
-            if cliente_id_link:
-                url_detalle = url_for('cliente_detalle', cliente_id=cliente_id_link) 
-                negocio_link = f'<a href="{url_detalle}">{cliente_negocio_display}</a>'
-            
             rows.append({
                 "id": r.id,
-                
+                "bank_transaction_id": r.bank_transaction_id,
                 "fecha_pago": fecha_display,
-                "fecha_pago_orden": fecha_iso,
-
+                "fecha_pago_iso": fecha_iso,
+                "negocio_link": negocio_link,
+                "negocio": r.cliente_negocio, # Fallback
                 "paquete": r.paquete or "—",
                 "vigencia": r.vigencia or "—",
-                "monto": monto_str,
-                "moneda": moneda_final, # <--- Siempre será un valor de moneda válido
+                "monto": monto_valor, # 🛑 Cambiado a float para el totalizador del JS
+                "moneda": moneda_final,
                 "metodo_pago": r.metodo_pago or "—", 
-                "motivo_descuento": r.motivo_descuento or "—",
-                "num_factura": r.numero_factura or "—",
-                "facturado_str": facturado,
+                "rfc": r.cliente_rfc or "--", # 🛑 NUEVO: Se envía el RFC al frontend
+                "num_factura": r.numero_factura or "",
+                "factura_pago": r.factura_pago,
+                "facturado_str": "Sí" if r.factura_pago or r.numero_factura else "No",
+                "motivo_descuento": r.motivo_descuento or "",
                 "id_gumi": r.suscripcion_id_gumi or "—",
                 "server": r.server_info or "—",
                 "pais_cliente": r.cliente_pais or "—", 
-                "negocio_link": negocio_link, 
-                "contacto": r.cliente_contacto or "—",
             })
 
         return jsonify({"data": rows})
 
     except Exception as e:
-        # Es buena práctica registrar el error completo en el log
         print(f"Error en api_pagos_dt_global: {traceback.format_exc()}")
         return jsonify({"data": []}), 500
 
@@ -2065,33 +1888,24 @@ def api_nuevo_pago():
     monto            = _parse_monto(data.get('monto'))
     metodo_pago      = data.get('metodo_pago') or None
     otro_metodo      = data.get('otro_metodo_pago') or None
-    factura_pago     = bool(data.get('factura_pago', False))
+    factura_pago = data.get('por_facturar') in [True, 1, 'true', 'on']
     numero_factura   = data.get('numero_factura') or None
     motivo_descuento = data.get('motivo_descuento') or None
     
     ### CORRECCIÓN CLAVE: El frontend envía 'paquete_id', no 'paquete' ###
-    paquete_precio_id = data.get('paquete_id') 
+    paquete_precio_id = data.get('paquete') or data.get('paquete_id')
     
-    # 🛑 FIX CRÍTICO: Generación de bank_transaction_id para pagos manuales
+    # 🟢 CORRECCIÓN ESD: Gestión de ID Bancario
     provided_bank_id = data.get('bank_transaction_id')
     
-    if provided_bank_id is None or provided_bank_id == '':
-        # Caso: Pago manual. Generamos el ID negativo único buscando el mínimo.
-        
-        # 1. BUSCAR EL VALOR MÍNIMO (más negativo) de bank_transaction_id
-        min_manual_id = db.session.query(
-            func.min(Pago.bank_transaction_id)
-        ).filter(Pago.bank_transaction_id < 0).scalar() # Buscamos el ID más negativo
-
-        # 2. Asignar el nuevo ID. Si min_manual_id es None, empezamos en -1.
-        if min_manual_id is None:
-            final_bank_transaction_id = -1
-        else:
-            final_bank_transaction_id = int(min_manual_id) - 1 
-    else:
-        # Caso: Pago de conciliación.
+    if provided_bank_id and str(provided_bank_id).strip():
+        # Si el ID viene del proceso de conciliación, se asigna
         final_bank_transaction_id = int(provided_bank_id)
+    else:
+        # Si es un pago manual o nuevo, nace PENDIENTE (None = NULL en DB)
+        final_bank_transaction_id = None
 
+    # El resto del código sigue igual...
     try:
         fecha_pago = date.fromisoformat(fecha_pago_str)
     except Exception:
@@ -2157,7 +1971,7 @@ def api_nuevo_pago():
     cliente.fecha_pago              = fecha_pago
     cliente.metodo_pago           = metodo_pago
     cliente.otro_metodo_pago      = otro_metodo
-    cliente.factura_pago          = factura_pago
+    cliente.factura_pago       = factura_pago
     cliente.numero_factura        = numero_factura
     cliente.motivo_descuento      = motivo_descuento
 
@@ -2200,14 +2014,33 @@ def api_nuevo_pago():
             
     # 6. Guardar todo
     try:
+        # 🟢 AUDITORÍA ESD: Ver qué fechas estamos mandando a la DB
+        print(f"--- DEBUG ESD ---")
+        print(f"Negocio: {cliente.negocio}")
+        print(f"Vence En (Calculado): {sus.vence_en}")
+        print(f"Próximo Pago (Calculado): {sus.proximo_pago}")
+
+        # Primer commit: guarda el registro del Pago y los cambios en 'sus'
         db.session.commit()
+        print("✅ Primer commit exitoso (Pago y Suscripción)")
+        
+        # 🛑 COMENTAMOS ESTO TEMPORALMENTE:
+        # Probablemente esta función está recalculando mal y sobreescribiendo el Paso 5
+        # try:
+        #    recalcular_vigencia_cliente(cliente_id)
+        #    db.session.commit() 
+        # except Exception as e_recalc:
+        #    print(f"⚠️ Error en recálculo: {e_recalc}")
+
         return jsonify({"ok": True, "msg": "Pago registrado correctamente"})
+        
     except Exception as e:
         db.session.rollback()
+        print(f"❌ ERROR CRÍTICO EN API_NUEVO_PAGO: {str(e)}")
+        # ... resto de tu manejo de errores
         error_message = str(e)
         if hasattr(e, 'orig') and hasattr(e.orig, 'args') and e.orig.args:
             error_message = f"Error SQL: {e.orig.args[0]}"
-            
         return jsonify({"ok": False, "error": f"Error al guardar el pago: {error_message}"}), 500
 
 @app.route('/api/pagos/agregar/<int:cliente_id>', methods=['POST'])
@@ -2233,19 +2066,31 @@ def api_agregar_pago(cliente_id):
 @app.route('/api/cliente_pago/<int:cliente_id>')
 @login_required
 def api_cliente_pago(cliente_id):
-    """Devuelve datos para el modal de AGREGAR PAGO:
-        - negocio, país
-        - paquete/vigencia actual (de Suscripcion)
-        - lista de paquetes disponibles para el país (con precio y moneda)
-    """
     cliente = Cliente.query.get_or_404(cliente_id)
     pais = (cliente.pais or "").upper().strip()
 
+    paquete_id_sugerido = None
+
+    # 1. Obtener la suscripción actual
     sus = Suscripcion.query.filter_by(cliente_id=cliente_id).first()
     paquete_actual = (sus.paquete if sus else None)
     vigencia_actual = (sus.vigencia if sus else None)
 
-    # Trae todos los paquetes del país; excluye variantes de sucursal
+    # 2. 🛑 NUEVO: Buscar el último pago registrado para este cliente
+    ultimo_pago = (
+        Pago.query
+        .filter_by(cliente_id=cliente_id)
+        .filter(Pago.status != 'CANCELADO')
+        .order_by(Pago.fecha_pago.desc())
+        .first()
+    )
+    ultimo_pago_info = "Sin pagos previos"
+    if ultimo_pago:
+        fecha_fmt = ultimo_pago.fecha_pago.strftime('%d/%m/%Y')
+        ultimo_pago_info = f"{ultimo_pago.paquete} ({ultimo_pago.vigencia}) pagado el {fecha_fmt}"
+        paquete_id_sugerido = ultimo_pago.paquete_precio_id
+
+    # 3. Traer paquetes del país
     registros = (
         PaquetePrecio.query
         .filter(PaquetePrecio.pais == pais)
@@ -2257,9 +2102,6 @@ def api_cliente_pago(cliente_id):
     paquete_id_actual = None
     for r in registros:
         nombre = r.paquete or ""
-        # Excluir combos de sucursal si los hubiera
-        if "(Sucursal" in nombre or "Sucursal)" in nombre:
-            continue
 
         paquetes.append({
             "id": r.id,
@@ -2269,6 +2111,7 @@ def api_cliente_pago(cliente_id):
             "moneda": r.moneda or "MXN",
         })
 
+        # Si el cliente tiene suscripción, intentamos pre-seleccionar ese paquete en el modal
         if paquete_actual and vigencia_actual:
             if nombre == paquete_actual and r.vigencia == vigencia_actual:
                 paquete_id_actual = r.id
@@ -2277,9 +2120,9 @@ def api_cliente_pago(cliente_id):
         "ok": True,
         "data": {
             "negocio": cliente.negocio,
-            "pais": pais,
-            "paquete_actual": paquete_actual,
-            "paquete_id_actual": paquete_id_actual,
+            "rfc": cliente.rfc,
+            "paquete_id_actual": paquete_id_sugerido or paquete_id_actual, # Priorizamos el último pago real
+            "ultimo_pago_info": ultimo_pago_info,
             "paquetes": paquetes
         }
     })
@@ -2339,21 +2182,20 @@ def cliente_detalle(cliente_id):
 def api_pagos_cliente_v2(cliente_id):
     """
     Devuelve los pagos registrados del cliente en formato JSON (para DataTables).
-    Lee la información de CADA pago individual.
+    Incluye status de conciliación bancaria y banderas de facturación.
     """
     cliente = Cliente.query.get_or_404(cliente_id)
     pagos = Pago.query.filter_by(
         cliente_id=cliente_id,
     ).order_by(Pago.fecha_pago.desc()).all()
     
-    # Define una moneda de fallback por país (para el monto)
     pais = (cliente.pais or "MÉXICO").upper()
-    moneda = "MXN" if pais == "MÉXICO" else ("COP" if pais == "COLOMBIA" else "USD")
+    moneda_default = "MXN" if pais == "MÉXICO" else ("COP" if pais == "COLOMBIA" else "USD")
 
     data = []
-    for p in pagos: # 'p' es cada objeto Pago individual
-        
-        # Leemos los datos directamente de 'p' (el pago)
+    for p in pagos:
+        # Lógica de facturación para el frontend
+        # Si tiene número de factura o el check de 'factura_pago' está activo
         facturado_pago = "Sí" if (p.factura_pago or (p.numero_factura and str(p.numero_factura).strip())) else "No"
 
         data.append({
@@ -2361,17 +2203,19 @@ def api_pagos_cliente_v2(cliente_id):
             "fecha_pago": p.fecha_pago.strftime("%Y-%m-%d") if p.fecha_pago else "",
             "paquete": p.paquete or "—",
             "vigencia": p.vigencia or "—",
-            "monto": f"{p.monto:,.2f}",
+            "monto": p.monto, # Enviamos el número puro para que JS lo formatee
             "motivo_descuento": p.motivo_descuento or "",
-            "moneda": moneda, # La moneda sigue siendo general
+            "moneda": moneda_default,
             "metodo_pago": p.metodo_pago or "—",
             "facturado": facturado_pago,
             "numero_factura": p.numero_factura or "",
-            "status": p.status
+            "status": p.status,
+            # 🛑 CAMPOS CLAVE PARA LAS NUEVAS COLUMNAS 🛑
+            "bank_transaction_id": p.bank_transaction_id, 
+            "factura_pago": p.factura_pago # Este es el check de "¿Este pago es por facturar?"
         })
 
     return jsonify({"data": data})
-
 
 # TASA DE CONVERSIÓN FIJA PARA DASHBOARD (Para unificar a MXN)
 TASA_USD_MXN = 18.0
@@ -2826,8 +2670,6 @@ def api_update_factura_pago(pago_id):
         return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
     
 
-# app.py
-
 @app.route('/clientes-por-vencer')
 @login_required
 @role_required(ROLES_LECTURA)
@@ -2854,32 +2696,32 @@ def clientes_por_vencer_list():
 @app.route('/api/clientes_por_vencer_dt')
 @login_required
 def api_clientes_por_vencer_dt():
-    
     try:
         from datetime import date, timedelta
         from sqlalchemy import or_, and_, extract
+        import urllib.parse  # 🛑 Necesario para codificar el mensaje de WhatsApp
         
-        # 1. Parámetros
         server_filtro = request.args.get('server')
         pais_filtro = request.args.get('pais')
         mes_vencimiento = request.args.get('month')
 
-        # 2. Fechas
         hoy = date.today()
-        fecha_limite = hoy + timedelta(days=15)
+        fecha_inicio_rango = hoy - timedelta(days=15) 
+        fecha_fin_rango = hoy + timedelta(days=15)    
 
-        # 3. Consulta Base
-        base_query = db.session.query(Cliente, Suscripcion).outerjoin(Suscripcion, Cliente.id == Suscripcion.cliente_id).filter(
+        base_query = db.session.query(Cliente, Suscripcion).outerjoin(
+            Suscripcion, Cliente.id == Suscripcion.cliente_id
+        ).filter(
             Suscripcion.id.isnot(None)
         ).filter(
             and_(
-                Suscripcion.status == 'Activo',
-                ~Suscripcion.paquete.ilike('%DEMO%'),
-                Suscripcion.vence_en <= fecha_limite
+                Suscripcion.vence_en >= fecha_inicio_rango,
+                Suscripcion.vence_en <= fecha_fin_rango,
+                Suscripcion.status != 'Eliminado'
             )
         )
 
-        # 4. Filtros Opcionales
+        # ... (filtros de server, pais y mes se mantienen igual) ...
         if server_filtro:
             base_query = base_query.filter(Suscripcion.server == server_filtro)
         if pais_filtro:
@@ -2888,265 +2730,218 @@ def api_clientes_por_vencer_dt():
             try:
                 mes = int(mes_vencimiento)
                 base_query = base_query.filter(extract('month', Suscripcion.vence_en) == mes)
-            except ValueError:
-                pass 
+            except ValueError: pass
 
-        # 5. Ejecución
         results = base_query.all()
         
-        # Diccionario manual para meses en español (Evita problemas de idioma del servidor)
-        meses_abbr = {
-            1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
-            7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"
-        }
-
-        # 6. Formato
+        meses_abbr = {1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
+                      7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"}
+        
         data = []
         for cliente, suscripcion in results:
+            es_demo = 'DEMO' in (suscripcion.paquete or '').upper()
             fecha_vencimiento = suscripcion.vence_en
-            
-            # Cálculo de días para color
             dias_restantes = (fecha_vencimiento - hoy).days if fecha_vencimiento else 999
-            clase_vencimiento = 'fw-bold text-success'
-            if dias_restantes < 0: clase_vencimiento = 'fw-bold text-danger'
-            elif dias_restantes <= 7: clase_vencimiento = 'fw-bold text-warning'
-            
-            # Formato de fecha amigable (30 ago 2025)
-            if fecha_vencimiento:
-                dia = fecha_vencimiento.day
-                mes = meses_abbr.get(fecha_vencimiento.month, "")
-                anio = fecha_vencimiento.year
-                fecha_display_str = f"{dia} {mes} {anio}"
-            else:
-                fecha_display_str = "N/A"
 
-            # Teléfonos
-            telefonos_display = ''
+            # 🛑 NUEVA LÓGICA: DEFINICIÓN DEL MENSAJE DE WHATSAPP 🛑
+            f_pago = fecha_vencimiento.strftime('%d/%m') if fecha_vencimiento else ""
+            
+            if es_demo:
+                msg = f"¡Hola {cliente.nombre_contacto}!, ¿cómo estás?, te saluda el equipo de Gumi. Tu periodo de prueba vence el {f_pago}. ¿Te gustaría conocer nuestros planes para continuar con tu servicio?"
+            elif dias_restantes < 0:
+                msg = f"¡Hola {cliente.nombre_contacto}!, ¿cómo estás?,  te saludamos de Gumi. Notamos que tu suscripción de {suscripcion.paquete} venció el {f_pago}. ¿Te apoyamos con tu proceso de renovación?"
+            elif dias_restantes <= 5:
+                msg = f"¡Hola {cliente.nombre_contacto}!, ¿cómo estás?,  te recordamos que tu suscripción de {suscripcion.paquete} vence este {f_pago}. ¿Gustas que te ayudemos a renovar de una vez?"
+            else:
+                msg = f"¡Hola {cliente.nombre_contacto}!, ¿cómo estás?, esperamos que todo vaya bien en tu negocio. Solo para recordarte que tu suscripción Gumi está por vencer el {f_pago}."
+
+            msg_encoded = urllib.parse.quote(msg)
+
+            # 1. Obtenemos los teléfonos y los limpiamos de letras, guiones o espacios
             lista_tels = [cliente.telefono, cliente.telefono_secundario_1, cliente.telefono_secundario_2, cliente.telefono_secundario_3]
+            tels_limpios = []
+
             for tel in lista_tels:
                 if tel:
-                    num = ''.join(filter(str.isdigit, tel))
-                    if num: 
-                        # Usamos div para lista vertical
-                        telefonos_display += f'<div class="mb-1"><a href="https://wa.me/{num}" target="_blank" class="text-decoration-none fw-bold text-success"><i class="fa-brands fa-whatsapp"></i> {tel.strip()}</a></div>'
+                    # Esto deja solo los números: "52 55-46..." -> "525546..."
+                    num_limpio = ''.join(filter(str.isdigit, str(tel)))
+                    if num_limpio:
+                        tels_limpios.append(num_limpio)
+
+            # 2. Guardamos la cadena de números para que el JavaScript la procese
+            # Resultado ejemplo: "525546396818, 525511223344"
+            telefonos_display = ", ".join(tels_limpios)
+            
+
+            # 2. Lógica de colores (Se mantiene)
+            if dias_restantes < 0:
+                clase_vencimiento = 'fw-bold text-danger' 
+            elif dias_restantes <= 5:
+                clase_vencimiento = 'fw-bold text-warning' 
+            else:
+                clase_vencimiento = 'fw-bold text-success' 
+            
+            fecha_display_str = f"{fecha_vencimiento.day} {meses_abbr.get(fecha_vencimiento.month, '')} {fecha_vencimiento.year}" if fecha_vencimiento else "N/A"
 
             data.append({
                 'id': cliente.id,
+                'es_demo': es_demo,
                 'negocio': cliente.negocio,
                 'pais': cliente.pais,
                 'nombre_contacto': cliente.nombre_contacto,
+                'mail': cliente.mail or '',
                 'telefonos_display': telefonos_display,
                 'id_gumi': suscripcion.id_gumi or 'N/A',
                 'server': suscripcion.server or 'N/A',
                 'paquete_nombre': suscripcion.paquete, 
+                'rfc': cliente.rfc,
                 'status': suscripcion.status, 
-                
-                # DATA CRÍTICA: 
-                # 1. Para ORDENAR correctamente usamos ISO (YYYY-MM-DD)
                 'vence_en_orden': fecha_vencimiento.isoformat() if fecha_vencimiento else '9999-12-31',
-                
-                # 2. Para MOSTRAR bonito usamos el formato español
                 'vence_en_display': f'<span class="{clase_vencimiento}">{fecha_display_str}</span>',
             })
-
         return jsonify({"data": data})
-
     except Exception as e:
+        logger.error(f"Error en api_clientes_por_vencer_dt: {e}")
         return jsonify({"error": str(e), "data": []}), 500
     
+
+@app.route('/api/cliente/marcar_wa/<int:cliente_id>/<int:nivel>', methods=['POST'])
+@login_required
+def marcar_wa(cliente_id, nivel):
+    try:
+        # Buscamos al cliente en la DB
+        cliente = Cliente.query.get_or_404(cliente_id)
+        
+        # Guardamos el nivel (solo si es mayor al que ya tenía, para no retroceder)
+        if nivel > (cliente.wa_nivel_seguimiento or 0):
+            cliente.wa_nivel_seguimiento = nivel
+            db.session.commit()
+            return jsonify(ok=True, message="Nivel actualizado")
+        
+        return jsonify(ok=True, message="Nivel ya registrado")
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(ok=False, error=str(e)), 500
 
 @app.route('/conciliacion')
 @login_required
 def conciliacion_list():
-    """Muestra la lista de transacciones bancarias pendientes de conciliar."""
+    """Muestra la página con la tabla de transacciones bancarias."""
+    from datetime import datetime
     
-    # 1. 🛑 Cálculo de Variables de Contexto 🛑
-    
-    try:
-        # Obtener todos los años únicos de las transacciones
-        # FIX: Ahora 'distinct' está importado globalmente
-        unique_years = db.session.query(
-            distinct(extract('year', BankTransaction.date))
-        ).filter(BankTransaction.date != None).all()
-        
-        # unique_years será una lista de tuplas, la convertimos a una lista de enteros
-        unique_years = sorted([int(y[0]) for y in unique_years if y[0] is not None], reverse=True)
-        
-    except Exception:
-        # Si la tabla está vacía o hay un error, usamos los años recientes
-        # 🛑 FIX 2: Usar 'datetime.now()' en lugar de 'datetime.datetime.now()'
-        unique_years = list(range(datetime.now().year, datetime.now().year - 3, -1))
-
-    # Definición del mapa de meses
+    # Obtenemos años para los filtros (esto evita que falle por falta de variables)
+    unique_years = [datetime.now().year, datetime.now().year - 1]
     months_map = {
         1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
         7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
     }
     
-    now = datetime.now() # FIX: Usar 'datetime.now()'
-
-    # 2. 🛑 Pre-cálculo de URLs (FIX para el error de Jinja) 🛑
-    url_transacciones = url_for("api_transacciones_pendientes_dt")
-    url_clientes_search = url_for("api_clientes_search")
-    url_cliente_pago_base = url_for("api_cliente_pago", cliente_id=0) # Base con marcador
-    url_paquetes = url_for("api_paquetes_by_country")
-    url_pago_registrar = url_for("pago_registrar")
-    
-    # Imprime las URLs para que veas si hay codificación extra en tu terminal
-    print("-" * 50)
-    print("Verificación de URLs (Salida de Python):")
-    print(f"URL Transacciones: {url_transacciones}")
-    print(f"URL Clientes Search: {url_clientes_search}")
-    print(f"URL Cliente Pago BASE: {url_cliente_pago_base}")
-    print(f"URL Paquetes: {url_paquetes}")
-    print(f"URL Pago Registrar: {url_pago_registrar}")
-    print("-" * 50)
-    
-    
-    # 3. Renderizar el template con todas las variables
-    return render_template('conciliacion_list.html',
-        unique_years=unique_years,
-        months_map=months_map,
-        now=now,
-        # Variables de URL
-        url_transacciones=url_transacciones,
-        url_clientes_search=url_clientes_search,
-        url_cliente_pago_base=url_cliente_pago_base,
-        url_paquetes=url_paquetes,
-        url_pago_registrar=url_pago_registrar
-    )
-
-
+    # 🛑 IMPORTANTE: Asegúrate de pasar las variables que tu HTML espera
+    return render_template('conciliacion_list.html', 
+                           unique_years=unique_years, 
+                           months_map=months_map, 
+                           now=datetime.now())
 
 @app.route('/conciliacion/importar', methods=['GET', 'POST'])
 @login_required
 @role_required(ROLES_SUPERADMIN)
 def conciliacion_importar():
     """Ruta para importar transacciones bancarias desde CSV."""
+    import time # Necesario para el ID manual
     import re 
     from decimal import Decimal
 
-    # Función helper para limpiar y obtener Decimal o 0 (CON LOGS DE DEBUG)
+    # Función helper para limpiar y obtener Decimal o 0
     def parse_monto_csv(monto_str):
-        
         if pd.isna(monto_str) or not str(monto_str).strip():
-            logger.debug(f"CSV Parse: Input '{monto_str}' es vacío/NaN. Resultado 0.00.")
             return Decimal('0.00')
-
         s = str(monto_str)
-        
-        # 1. Limpieza inicial de caracteres no deseados ($, ", \t, \xa0, etc.)
         s_cleaned_initial = s.replace('$', '').replace('"', '').replace('\t', '').replace('\xa0', '').strip()
-        
-        # CRÍTICO: Eliminamos TODOS los espacios internos
         s_no_spaces = s_cleaned_initial.replace(' ', '')
-        
-        logger.debug(f"CSV Parse (1): Original='{s}' Limpieza Inicial='{s_no_spaces}'")
-
-        # 2. FIX CRÍTICO: Si la cadena final es solo un guion, es un valor nulo (0.00)
         if s_no_spaces == '-':
-            logger.debug("CSV Parse FIX: Cadena es solo '-'. Retorna 0.00.")
             return Decimal('0.00')
-
-        # 3. Lógica de separadores (Basado en tu formato: Coma es miles, punto es decimal)
         s_final = s_no_spaces
-        
-        # Si hay comas y puntos, asumimos formato 1,000.00 y eliminamos la coma
         if s_no_spaces.count(',') > 0 and s_no_spaces.count('.') > 0:
             s_final = s_no_spaces.replace(',', '')
-            
         elif s_no_spaces.count(',') == 1 and s_no_spaces.count('.') == 0:
-            # Si solo hay una coma (ej: 1,00) asumimos que es separador decimal
             s_final = s_no_spaces.replace(',', '.')
-        
-        logger.debug(f"CSV Parse (2): Limpieza Separadores='{s_final}'")
-
-        # 4. Intento de conversión y log de debug
         try:
-            if not s_final:
-                return Decimal('0.00')
-            result = Decimal(s_final)
-            logger.debug(f"CSV Parse SUCCESS: Resultado final: {result}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"CSV Parse FAILURE: La cadena '{s_final}' falló la conversión a Decimal. Error: {e}")
+            return Decimal(s_final) if s_final else Decimal('0.00')
+        except Exception:
             return Decimal('0.00')
 
-    # --- INICIO DE LA LÓGICA DE LA RUTA ---
     if request.method == 'POST':
-        
-        # 1. VERIFICAR QUE EL ARCHIVO ESTÉ EN LA PETICIÓN
         if 'archivo_csv' not in request.files:
             flash('No se encontró el archivo en la petición.', 'danger')
             return redirect(url_for('conciliacion_importar'))
 
         file = request.files['archivo_csv']
-        
-        # 2. VERIFICAR NOMBRE DEL ARCHIVO
         if file.filename == '':
             flash('Seleccione un archivo.', 'danger')
             return redirect(url_for('conciliacion_importar'))
 
-        # 3. VERIFICAR EXTENSIÓN
-        if not file.filename.endswith('.csv'):
-            flash('Formato de archivo no soportado. Por favor, sube un archivo CSV.', 'danger')
-            return redirect(request.url)
-            
-        # --- AHORA SE GARANTIZA QUE 'file' ES UN CSV NO VACÍO ---
         try:
-            # Lógica de lectura y parseo
+            # Lectura del archivo
             try:
-                # Intenta leer el archivo
                 df = pd.read_csv(file, encoding='utf-8', thousands=',')
             except UnicodeDecodeError:
                 file.seek(0)
                 df = pd.read_csv(file, encoding='latin1', thousands=',')
             
-            
             df.columns = df.columns.str.upper().str.strip()
-
             REQUIRED_COLS = ['FECHA', 'CONCEPTO', 'EGRESO', 'INGRESO', 'TOTAL']
+            
             if not all(col in df.columns for col in REQUIRED_COLS):
                 missing = [col for col in REQUIRED_COLS if col not in df.columns]
-                raise ValueError(f"Faltan columnas requeridas: {', '.join(missing)}. Debe tener: {', '.join(REQUIRED_COLS)}.")
+                raise ValueError(f"Faltan columnas: {', '.join(missing)}")
 
             imported_count = 0
             ingreso_count = 0
             egreso_count = 0
             
-            db.session.begin_nested() 
+            # Usamos una marca de tiempo base para los IDs manuales de esta carga
+            timestamp_base = int(time.time() * 1000)
 
             for index, row in df.iterrows():
                 try:
                     fecha_str = str(row['FECHA']).strip()
                     concept = str(row['CONCEPTO']).strip()
                     
-                    try:
-                        bank_date = datetime.strptime(fecha_str, '%d-%m-%Y').date()
-                    except ValueError:
-                        bank_date = datetime.strptime(fecha_str, '%d/%m/%Y').date()
-                    except ValueError:
-                        bank_date = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+                    bank_date = None
+                    for fmt in ('%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%d'):
+                        try:
+                            bank_date = datetime.strptime(fecha_str, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if not bank_date:
+                        continue
 
                     debit_amount = parse_monto_csv(row['EGRESO'])
                     credit_amount = parse_monto_csv(row['INGRESO'])
                     total_balance = parse_monto_csv(row['TOTAL'])
-                    
-                    logger.debug(f"Fila {index+2}: Debit={debit_amount}, Credit={credit_amount}, Total={total_balance}")
 
-                    # Solo guardar si hay un movimiento monetario o un balance total
                     if debit_amount != Decimal('0.00') or credit_amount != Decimal('0.00') or total_balance != Decimal('0.00'):
+                        
+                        # 🛑 SOLUCIÓN FINAL: Asignación manual de ID para evitar error de SQLite
+                        id_manual = timestamp_base + index
+
                         new_transaction = BankTransaction(
+                            id=id_manual, # <--- Enviamos el ID explícitamente
                             date=bank_date, 
                             concept=concept, 
-                            credit=credit_amount, 
-                            debit=debit_amount, 
-                            total_balance=total_balance,
+                            credit=float(credit_amount), 
+                            debit=float(debit_amount), 
+                            total_balance=float(total_balance),
                             is_conciliated=False,
-                            status='PENDIENTE' # Status por defecto
+                            status='PENDIENTE'
                         )
+                        
                         db.session.add(new_transaction)
+                        # Flush inmediato para asegurar que SQLite acepte el ID
+                        db.session.flush() 
+                        
                         imported_count += 1
                         if credit_amount > Decimal('0.00'):
                             ingreso_count += 1
@@ -3154,19 +2949,12 @@ def conciliacion_importar():
                             egreso_count += 1
                             
                 except Exception as e:
-                    logger.error(f"Error de procesamiento en fila {index+2}: {e}")
-                    db.session.rollback()
-                    db.session.begin_nested() 
+                    logger.error(f"Error en fila {index+2}: {e}")
+                    db.session.rollback() # Limpia la sesión tras el error de integridad
                     continue
             
             db.session.commit()
-
-            if not errores:
-                flash(f"✅ Importación exitosa. Registrados: {ingreso_count} ingresos y {egreso_count} egresos (Total: {imported_count}).", 'success')
-            else:
-                 # Esta parte solo se ejecuta si el bloque try/except dentro del bucle falló
-                 flash(f"⚠️ Advertencia: Se cargaron {imported_count} registros. Hubo errores internos, revise el log.", 'warning')
-
+            flash(f"✅ Importación exitosa. Registrados: {imported_count} movimientos.", 'success')
             return redirect(url_for('conciliacion_list'))
             
         except Exception as e:
@@ -3174,7 +2962,36 @@ def conciliacion_importar():
             flash(f'Error al procesar el archivo CSV: {e}', 'danger')
             return redirect(request.url)
             
-    return render_template('conciliacion_importar.html')
+    return redirect(url_for('conciliacion_list'))
+
+@app.route('/api/obtener_detalle_conciliacion/<int:trans_id>')
+@login_required
+def api_obtener_detalle_conciliacion(trans_id):
+    # Buscamos el pago vinculado a esta transacción
+    pago = Pago.query.filter_by(bank_transaction_id=trans_id).first()
+    
+    if not pago:
+        # Si no hay pago, quizás solo hay datos en la transacción
+        trans = BankTransaction.query.get(trans_id)
+        return jsonify({
+            "ok": True, 
+            "data": {
+                "cliente_nombre": trans.negocio_conciliado or "",
+                "numero_factura": trans.num_factura_conciliado or "",
+                "cliente_id": None
+            }
+        })
+
+    return jsonify({
+        "ok": True,
+        "data": {
+            "cliente_id": pago.cliente_id,
+            "cliente_nombre": pago.cliente.negocio if pago.cliente else "Desconocido",
+            "numero_factura": pago.numero_factura or "",
+            "motivo_descuento": pago.motivo_descuento or "",
+            "paquete_id": pago.paquete_precio_id
+        }
+    })
 
 
 @app.route('/api/transacciones_pendientes_dt')
@@ -3182,20 +2999,19 @@ def conciliacion_importar():
 def api_transacciones_pendientes_dt():
     """API para DataTables de transacciones bancarias (Pendientes y Conciliadas)."""
     
-    # Función de formato manual simple: Decimal a string con 2 decimales y coma de miles
+    import re
+    import traceback
+    from decimal import Decimal
+    
     def format_decimal_to_str(d):
-        if d is None:
-            return "0.00"
+        if d is None: return "0.00"
         try:
-            # Uso de ABS para asegurar que el débito se muestre positivo en la columna EGRESO
             return f"{abs(Decimal(d)):,.2f}"
-        except Exception:
-             return "0.00"
+        except: return "0.00"
 
     year = request.args.get('year', None, type=int)
     month = request.args.get('month', None, type=int)
 
-    # 1. Consulta SQL
     try:
         query = db.session.query(
             BankTransaction.id,
@@ -3209,9 +3025,10 @@ def api_transacciones_pendientes_dt():
             BankTransaction.negocio_conciliado,
             BankTransaction.num_factura_conciliado,
             Pago.id.label('pago_id'), 
-            Pago.numero_factura.label('numero_factura'),  # <--- CORRECCIÓN CRÍTICA: Añadir la factura del Pago
+            Pago.numero_factura.label('numero_factura'),
+            Cliente.id.label('cliente_id'),
             Cliente.negocio.label('cliente_negocio'),
-            Cliente.rfc.label('rfc_nit') # RFC/NIT del cliente
+            Cliente.rfc.label('rfc_nit')
         ).outerjoin(
             Pago, BankTransaction.id == Pago.bank_transaction_id
         ).outerjoin(
@@ -3226,84 +3043,120 @@ def api_transacciones_pendientes_dt():
         transactions_data = query.order_by(db.desc(BankTransaction.date)).all()
         
     except Exception as e:
-        logger.error(f"Error en la consulta de DataTables: {traceback.format_exc()}")
-        return jsonify({'data': [], 'error': f'Error en consulta de DB: {e}'}), 500
+        logger.error(f"Error en la consulta: {traceback.format_exc()}")
+        return jsonify({'data': [], 'error': str(e)}), 500
 
-
-    # 2. Procesamiento y Formato
     data = []
-    
     for row in transactions_data:
-        # Aseguramos que los valores sean Decimal para la comparación
         debit = row.debit if row.debit is not None else Decimal('0.00')
         credit = row.credit if row.credit is not None else Decimal('0.00')
         total_balance = row.total_balance if row.total_balance is not None else Decimal('0.00')
-        
         is_ingreso = credit > Decimal('0.00')
         
-        # Lógica de display para Negocio y Factura
+        # 🟢 OBTENER TODOS LOS IDs DE CLIENTES VINCULADOS
+        # Buscamos en la tabla Pago todos los registros que tengan este bank_transaction_id
+        pagos_vinculados = Pago.query.filter_by(bank_transaction_id=row.id).all()
+        lista_ids = [str(p.cliente_id) for p in pagos_vinculados if p.cliente_id]
+        negocio_final = row.negocio_conciliado or row.cliente_negocio or 'N/A'
         
-        # 1. Intenta usar los datos directamente de la Transacción Bancaria (para Sucursal/Exportación)
-        negocio_final = row.negocio_conciliado or 'N/A'
+        if not lista_ids and negocio_final and negocio_final != 'N/A':
+            # Separamos los nombres: "Vet A, Vet B" -> ["Vet A", "Vet B"]
+            nombres_a_buscar = [n.strip() for n in negocio_final.split(',')]
+            for nom in nombres_a_buscar:
+                # Buscamos al cliente en la DB por su nombre de negocio
+                c = Cliente.query.filter(Cliente.negocio == nom).first()
+                if c:
+                    lista_ids.append(str(c.id))
         
-        # 🛑 INICIO DEL AJUSTE PARA QUITAR EL EMAIL 🛑
+        # 🛑 REGLA ESD: Eliminamos el split(',') para que NO corte los nombres múltiples
         if negocio_final != 'N/A':
-            # La limpieza solo aplica si la información viene de 'negocio_conciliado'
-            
-            # Patrón para eliminar (Email) o [Email] o cualquier cosa entre paréntesis o corchetes
-            # Esto cubre el caso de Select2 que guarda 'Nombre (email)'
-            negocio_final = re.sub(r'\s*\(.*\)', '', negocio_final)
-            negocio_final = re.sub(r'\s*\[.*\]', '', negocio_final)
-            
-            # Patrón para eliminar cualquier cosa que parezca un correo después de un espacio o coma
-            # Esto cubre casos como 'Nombre, email@dominio.com'
-            if ',' in negocio_final:
-                 negocio_final = negocio_final.split(',')[0].strip()
-                
-            negocio_final = negocio_final.strip() # Limpiamos cualquier espacio extra
-        # 🛑 FIN DEL AJUSTE PARA QUITAR EL EMAIL 🛑
+            try:
+                negocio_final = re.sub(r'\s*\(.*\)', '', str(negocio_final))
+                negocio_final = re.sub(r'\s*\[.*\]', '', str(negocio_final))
+                negocio_final = negocio_final.strip() 
+            except Exception as e:
+                print(f"Error re.sub: {e}")
 
-
-        factura_final = row.num_factura_conciliado or 'N/A'
-        
-        # 2. Si hay un Pago (Conciliación Clásica), sobreescribe con el nombre limpio del cliente
-        if row.pago_id and row.cliente_negocio:
-             negocio_final = row.cliente_negocio # Este ya debe ser solo el nombre
-             # ¡ESTA LÍNEA AHORA FUNCIONARÁ PORQUE 'numero_factura' FUE INCLUIDO EN EL SELECT!
-             factura_final = row.numero_factura or row.num_factura_conciliado or 'N/A' # Prefiere la factura del Pago si existe
-        
-        # 3. RFC/NIT se toma solo si hay un Pago (conciliación clásica)
+        factura_final = row.numero_factura or row.num_factura_conciliado or 'N/A'
         rfc_final = row.rfc_nit or 'N/A' 
 
-
+        # ... (dentro del for row in transactions_data) ...
         data.append({
             'id': row.id,
             'fecha_banco': row.date.strftime('%d-%m-%Y'),
             'concepto': row.concept,
-            
-            # Datos de conciliación
-            'status': row.status, # Enviamos el status real de la Transacción Bancaria
+            'status': row.status,
             'is_conciliated': row.is_conciliated,
             'pago_id': row.pago_id, 
-            
-            # Valores formateados (String)
+            'cliente_id': row.cliente_id, 
+            'cliente_ids_todos': ",".join(lista_ids),
             'egreso_str': format_decimal_to_str(debit),
             'ingreso_str': format_decimal_to_str(credit), 
             'total_str': format_decimal_to_str(total_balance),
             
-            # Valores numéricos (Float para sort/export)
+            # CAMPOS NUMÉRICOS (Para lógica interna y sumatorias)
             'egreso_num': float(debit),
             'ingreso_num': float(credit),
             'total_num': float(total_balance),
             
-            # Datos conciliados (o pre-conciliados)
-            'negocio_conciliado': negocio_final, 
+            'negocio_conciliado': negocio_final,
             'num_factura_conciliado': factura_final,
             'rfc_nit_conciliado': rfc_final, 
             'is_ingreso': is_ingreso 
         })
         
     return jsonify({'data': data})
+# 🟢 DEBUG ESD: Esto imprimirá en tu terminal cuántas filas encontró
+    print(f"--- DEBUG CONCILIACION ---")
+    print(f"Registros encontrados: {len(data)}")
+    if len(data) > 0:
+        print(f"Ejemplo de primer registro: {data[0]['concepto']}")
+
+
+@app.route('/api/pagos_sugeridos_conciliar')
+@login_required
+def api_pagos_sugeridos_conciliar():
+    monto_banco = request.args.get('monto', type=float)
+    fecha_str = request.args.get('fecha', '')
+
+    try:
+        partes = fecha_str.split('-')
+        mes_b, anio_b = int(partes[1]), int(partes[2])
+
+        # 🛑 AJUSTE PREVENTIVO ESD 🛑
+        # Buscamos pagos del mes que estén "sucios" (IDs negativos o menores a 1)
+        # y los liberamos automáticamente para que aparezcan en el modal
+        pagos_bloqueados = Pago.query.filter(
+            Pago.bank_transaction_id < 1,
+            Pago.bank_transaction_id != None
+        ).all()
+        
+        if pagos_bloqueados:
+            for p in pagos_bloqueados:
+                p.bank_transaction_id = None
+            db.session.commit()
+
+        # Ahora buscamos las sugerencias de forma limpia
+        sugerencias = Pago.query.filter(
+            func.round(Pago.monto, 0) == round(monto_banco, 0),
+            db.extract('month', Pago.fecha_pago) == mes_b,
+            db.extract('year', Pago.fecha_pago) == anio_b,
+            Pago.bank_transaction_id == None,
+            Pago.status == 'ACTIVO' # Cambiamos a ACTIVO según vimos en tu log
+        ).all()
+
+        data = [{
+            "pago_id": p.id,
+            "negocio": p.cliente.negocio if p.cliente else "N/A",
+            "paquete": p.paquete,
+            "monto": float(p.monto),
+            "fecha_gumi": p.fecha_pago.strftime('%d-%m-%Y')
+        } for p in sugerencias]
+
+        return jsonify({"ok": True, "data": data})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 # ----------------------------------------------------
 # 🟢 NUEVA RUTA: ELIMINAR TRANSACCIÓN BANCARIA
@@ -3344,94 +3197,93 @@ def transaccion_eliminar(transaccion_id):
 @app.route('/pagos/registrar', methods=['POST'])
 @login_required
 def pago_registrar():
-    """Registra un nuevo Pago asociado a una BankTransaction o actualiza uno existente (Re-conciliación)."""
+    """Registra un nuevo Pago asociado a una BankTransaction o actualiza uno existente (Edición)."""
     from flask import current_app
     from decimal import Decimal
-    from datetime import datetime # Aseguramos que datetime esté disponible
+    from datetime import datetime
     
     try:
         data = request.form
-        
-        # Datos requeridos para la conciliación
         bank_transaction_id = data.get('bank_transaction_id', type=int)
         cliente_id = data.get('cliente_id', type=int)
         paquete_precio_id = data.get('paquete_id', type=int)
-        
-        # Datos del formulario
         fecha_pago_str = data.get('fecha_pago')
         monto_pago = Decimal(data.get('monto_pago', 0.0))
         num_factura = data.get('numero_factura')
         
-        # 1. Validación inicial
         if not all([bank_transaction_id, cliente_id, paquete_precio_id, fecha_pago_str]):
             return jsonify(ok=False, message='Faltan datos críticos.'), 400
 
-        # 2. Obtener objetos de la DB
+        # 1. Obtener objetos base
         transaccion = db.session.get(BankTransaction, bank_transaction_id)
-        cliente = db.session.get(Cliente, cliente_id)
+        cliente_nuevo = db.session.get(Cliente, cliente_id)
         paquete_precio = db.session.get(PaquetePrecio, paquete_precio_id)
         
-        if not transaccion or not cliente or not paquete_precio:
+        if not transaccion or not cliente_nuevo or not paquete_precio:
             return jsonify(ok=False, message='Transacción, Cliente o Paquete no válidos.'), 400
 
-        # 🛑 FIX CRÍTICO: Conversión de fecha flexible. 
-        # Intentamos primero el formato ISO (YYYY-MM-DD) que envían los inputs web.
+        # 2. Procesar Fecha
         try:
             fecha_pago = datetime.strptime(fecha_pago_str, '%Y-%m-%d').date()
         except ValueError:
-            # Fallback al formato DD-MM-YYYY (por si se envía desde otro lugar o se editó)
             try:
                 fecha_pago = datetime.strptime(fecha_pago_str, '%d-%m-%Y').date()
             except ValueError:
-                current_app.logger.error(f"Error crítico: Formato de fecha de pago '{fecha_pago_str}' es incorrecto.")
-                return jsonify(ok=False, message=f'Formato de fecha de pago incorrecto: {fecha_pago_str} (Esperado YYYY-MM-DD o DD-MM-YYYY).'), 400
+                return jsonify(ok=False, message='Formato de fecha incorrecto.'), 400
         
-        # 3. Determinar si es un UPDATE (Re-conciliación) o INSERT (Nueva conciliación)
-        pago_existente = Pago.query.filter_by(bank_transaction_id=bank_transaction_id).first()
+        # 3. LÓGICA DE EDICIÓN / RE-CONCILIACIÓN
+        # Buscamos si ya existe un pago vinculado a esta transacción bancaria
+        pago = Pago.query.filter_by(bank_transaction_id=bank_transaction_id).first()
         
-        is_update = pago_existente is not None
-        pago = pago_existente if is_update else Pago()
+        id_cliente_anterior = None
+        is_update = False
 
-        # 4. Asignar/Actualizar campos del Pago
-        pago.nombre = cliente.nombre_contacto
-        pago.correo = cliente.mail
-        pago.cliente_id = cliente_id
+        if pago:
+            is_update = True
+            # Si el cliente cambió, guardamos el anterior para recalcular su vigencia (quitarle el tiempo)
+            if pago.cliente_id != cliente_id:
+                id_cliente_anterior = pago.cliente_id
+        else:
+            pago = Pago()
+            db.session.add(pago)
+
+        # 4. Asignar datos al Pago
+        pago.nombre = cliente_nuevo.nombre_contacto
+        pago.correo = cliente_nuevo.mail
+        pago.cliente_id = cliente_id # Aquí asignamos el nuevo dueño
         pago.monto = monto_pago 
         pago.numero_factura = num_factura
         pago.fecha_pago = fecha_pago
-
-        # Datos del paquete
         pago.paquete = paquete_precio.paquete
         pago.vigencia = paquete_precio.vigencia
         pago.moneda = paquete_precio.moneda
         pago.paquete_precio_id = paquete_precio_id
-        
-        # Vínculos
         pago.bank_transaction_id = bank_transaction_id
-        pago.status = 'ACTIVO' # Siempre activo para una conciliación/actualización
+        pago.status = 'ACTIVO'
 
-        if not is_update:
-            db.session.add(pago)
-
-        # 5. Marcar la Transacción como conciliada y actualizar status
+        # 5. Actualizar la Transacción Bancaria
         transaccion.is_conciliated = True
         transaccion.status = 'CONCILIADO'
-        transaccion.negocio_conciliado = cliente.negocio # Guardar el negocio en la transacción
-        transaccion.num_factura_conciliado = num_factura # Guardar factura en la transacción
+        transaccion.negocio_conciliado = cliente_nuevo.negocio
+        transaccion.num_factura_conciliado = num_factura
 
-        # 6. Recalcular Vigencia 
+        # 6. RECALCULAR VIGENCIAS (Crucial para el Dashboard)
+        # Recalculamos al cliente nuevo (para que gane vigencia)
         recalcular_vigencia_cliente(cliente_id)
+        
+        # Si hubo un cambio de cliente, recalculamos al anterior (para que pierda la vigencia de este pago)
+        if id_cliente_anterior:
+            recalcular_vigencia_cliente(id_cliente_anterior)
 
         db.session.commit()
         
         action = "actualizado" if is_update else "registrado"
-        return jsonify(ok=True, message=f'Conciliación {action} con éxito. Vigencia de cliente recalculada.'), 200
+        return jsonify(ok=True, message=f'Conciliación {action} con éxito.'), 200
 
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"Error en pago_registrar/actualizar: {traceback.format_exc()}")
-        return jsonify(ok=False, message=f'Error interno al procesar el pago: {e}'), 500
-
+        current_app.logger.error(f"Error: {traceback.format_exc()}")
+        return jsonify(ok=False, message=f'Error: {e}'), 500
 
 # ----------------------------------------------------
 # 🟢 API: PAQUETES (Para Selects Simples)
@@ -3569,15 +3421,63 @@ def api_paquetes_by_country():
     })
 
 
-@app.route('/api/conciliar_transaccion/<int:transaccion_id>', methods=['POST'])
+@app.route('/api/conciliar_transaccion', methods=['POST'])
 @login_required
-@role_required(ROLES_MODIFICACION)
-def api_conciliar_transaccion(transaccion_id):
-    """
-    Realiza la conciliación: crea un Pago y marca la BankTransaction como conciliada.
-    DEPRECATED: Esta ruta ya no se usa, reemplazada por pago_registrar.
-    """
-    return jsonify(ok=False, msg="Ruta obsoleta, use /pagos/registrar"), 410
+def api_conciliar_transaccion():
+    data = request.get_json()
+    trans_id = data.get('trans_id')
+    pago_ids = data.get('pago_ids', [])
+    # 🟢 Cambiamos para recibir la lista plural que enviamos desde JS
+    cliente_ids_manual = data.get('cliente_ids_manual', []) 
+    num_factura = data.get('numero_factura')
+
+    if not trans_id:
+        return jsonify({"ok": False, "error": "Falta el ID de la transacción"}), 400
+
+    try:
+        transaccion = BankTransaction.query.get(trans_id)
+        if not transaccion:
+            return jsonify({"ok": False, "error": "Transacción no encontrada"}), 404
+
+        nombres_negocios = []
+        
+        # CASO A: Conciliación por sugerencias (Pagos ya existentes)
+        if pago_ids:
+            for pid in pago_ids:
+                pago = Pago.query.get(pid)
+                if pago:
+                    pago.bank_transaction_id = trans_id
+                    # Si el usuario escribió una factura en el modal, se la ponemos al pago
+                    if num_factura and not pago.numero_factura:
+                        pago.numero_factura = num_factura
+                    if pago.cliente:
+                        nombres_negocios.append(pago.cliente.negocio)
+        
+        # CASO B: Conciliación Manual Múltiple
+        if cliente_ids_manual:
+            for c_id in cliente_ids_manual:
+                cliente = Cliente.query.get(c_id)
+                if cliente:
+                    # Evitamos duplicar nombres si ya estaban en las sugerencias
+                    if cliente.negocio not in nombres_negocios:
+                        nombres_negocios.append(cliente.negocio)
+
+        # Actualizamos la transacción bancaria
+        transaccion.status = 'CONCILIADO'
+        transaccion.is_conciliated = True
+        transaccion.num_factura_conciliado = num_factura
+        
+        # Guardamos la lista de nombres separada por comas
+        if nombres_negocios:
+            transaccion.negocio_conciliado = ", ".join(nombres_negocios)
+        else:
+            transaccion.negocio_conciliado = "Conciliado Manual"
+        
+        db.session.commit()
+        return jsonify({"ok": True, "message": "Conciliación exitosa"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # 🛑 RUTA DE PRE-CONCILIACIÓN SUCURSAL (CORREGIDA)
@@ -3623,6 +3523,85 @@ def api_preconciliar_sucursal(transaccion_id):
             "message": f"Error al pre-conciliar la sucursal: {error_message}"
         }), 500
     
+
+@app.route('/api/pagos_candidatos_conciliar')
+@login_required
+def api_pagos_candidatos_conciliar():
+    """Busca pagos del mes/año que NO están conciliados aún."""
+    from sqlalchemy import extract, and_, not_
+    
+    mes = request.args.get('month', type=int)
+    year = request.args.get('year', type=int)
+    
+    if not mes or not year:
+        return jsonify(ok=False, message="Faltan parámetros de fecha"), 400
+
+    # Subquery: Pagos que ya tienen una transacción vinculada
+    conciliados_ids = db.session.query(Pago.id).filter(
+        Pago.bank_transaction_id.isnot(None)
+    ).subquery()
+
+    # Query: Pagos activos del mes que no están en la subquery
+    query = db.session.query(Pago, Cliente).join(
+        Cliente, Pago.cliente_id == Cliente.id
+    ).filter(
+        and_(
+            extract('month', Pago.fecha_pago) == mes,
+            extract('year', Pago.fecha_pago) == year,
+            Pago.status == 'ACTIVO',
+            not_(Pago.id.in_(conciliados_ids))
+        )
+    )
+
+    results = query.all()
+    data = []
+    for pago, cliente in results:
+        data.append({
+            "pago_id": pago.id,
+            "text": f"{cliente.negocio} - ({pago.moneda} {pago.monto:,.2f})",
+            "fecha_pago": pago.fecha_pago.strftime('%Y-%m-%d'),
+            "paquete_id": pago.paquete_precio_id, # Usamos el ID de precio que ya tiene el pago
+            "monto": float(pago.monto),
+            "cliente_id": cliente.id,
+            "negocio": cliente.negocio,
+            "factura": pago.numero_factura or ""
+        })
+    
+    return jsonify(ok=True, data=data)
+
+
+@app.route('/api/mantenimiento/limpiar_ids_negativos')
+@login_required
+def limpiar_ids_negativos():
+    # Buscamos todos los pagos que tengan IDs negativos
+    pagos_sucios = Pago.query.filter(Pago.bank_transaction_id < 0).all()
+    count = 0
+    for p in pagos_sucios:
+        p.bank_transaction_id = None
+        count += 1
+    db.session.commit()
+    return f"Se liberaron {count} pagos que tenían IDs negativos. Ahora todos aparecen como PENDIENTES."
+
+@app.route('/api/clientes/verificar_mail', methods=['POST'])
+@login_required
+def verificar_mail_cliente():
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    if not email:
+        return jsonify({"existe": False})
+
+    # Buscamos si ya existe alguien con ese correo
+    cliente_existente = Cliente.query.filter_by(mail=email).first()
+    
+    if cliente_existente:
+        return jsonify({
+            "existe": True,
+            "negocio": cliente_existente.negocio,
+            "contacto": cliente_existente.nombre_contacto
+        })
+    return jsonify({"existe": False})
+
+
 
 # ========== Main ==========
 if __name__ == '__main__':

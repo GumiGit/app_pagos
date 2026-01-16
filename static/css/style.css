@@ -121,3 +121,21 @@ button:hover {
 .swal2-confirm {
   background-color: #198754;
 }
+
+#tablaClientes th, #tablaClientes td { 
+        padding: 4px 8px !important; 
+        vertical-align: middle;
+    }
+    /* ID GUMI y RFC pequeños */
+    .font-id-gumi { font-size: 0.65rem; color: #6c757d; font-family: monospace; }
+    .font-rfc { font-size: 0.65rem; color: #7f8c8d; }
+    /* Server / País */
+    .text-pais { font-size: 0.6rem; text-transform: uppercase; font-weight: bold; color: #999; display: block; margin-top: -3px; }
+    /* Ajuste de Pills para que sean redondos */
+    .badge.rounded-pill { padding: 0.4em 0.8em !important; font-size: 0.65rem !important; }
+
+    input.input-factura-inline[style*="border: 2px solid #dc3545"]::placeholder {
+        color: #dc3545 !important;
+        font-weight: bold;
+        opacity: 1;
+    }
