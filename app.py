@@ -2845,7 +2845,7 @@ def conciliacion_list():
 @app.route('/conciliacion/importar', methods=['GET', 'POST'])
 @login_required
 @role_required(ROLES_SUPERADMIN)
-def conciliacion_importar():
+def importar_csv():
     """Ruta para importar transacciones bancarias desde CSV."""
     import time # Necesario para el ID manual
     import re 

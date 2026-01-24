@@ -191,6 +191,34 @@
     </div>
 </div>
 
+<div class="modal fade" id="modalImportarCSV" tabindex="-1" aria-labelledby="modalImportarCSVLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="modalImportarCSVLabel"><i class="fas fa-file-csv me-2"></i>Importar Transacciones Bancarias</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="{{ url_for('importar_csv') }}" method="POST" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="archivo_csv" class="form-label fw-bold">Selecciona el archivo CSV del banco</label>
+                        <input type="file" class="form-control" id="archivo_csv" name="archivo_csv" accept=".csv" required>
+                        <div class="form-text mt-2">
+                            <i class="fas fa-info-circle me-1"></i> Asegúrate de que el formato coincida con el procesador configurado en el servidor.
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-upload me-1"></i> Subir y Procesar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block custom_scripts %}
