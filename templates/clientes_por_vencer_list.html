@@ -346,7 +346,23 @@ $(document).ready(function() {
                         return html + '</div>';
                     }
                 },
-                { data: 'status', className: 'text-center', render: d => `<span class="small fw-bold ${d === 'Activo' ? 'text-success' : 'text-warning'}">${d}</span>` },
+                { 
+                    data: 'status', 
+                    className: 'text-center', 
+                    render: function(d, type, row) {
+                        // Determinamos el color
+                        let textClass = d === 'Activo' ? 'text-success' : 'text-warning';
+                        let html = `<div class="small fw-bold ${textClass}">${d}</div>`;
+                        
+                        // 🟢 NUEVO: Si hay fecha de status, la ponemos debajo en gris muy pequeño
+                        if (row.fecha_status) {
+                            html += `<div style="font-size: 0.6rem; color: #adb5bd; line-height: 1;">
+                                        Desde: ${row.fecha_status}
+                                    </div>`;
+                        }
+                        return html;
+                    }
+                },
                 { data: 'paquete_nombre', className: 'small' },
                 { 
                     data: 'rfc', 

@@ -28,7 +28,7 @@
         <h2 class="mb-2">{{ cliente.negocio }}</h2>
 
         <!-- Dropdown de STATUS (Activo/Suspendido) -->
-        <div class="dropdown mb-3">
+        <div class="dropdown mb-1">
           <button class="badge rounded-pill px-3 py-2 dropdown-toggle fs-6 {{ color }}" data-bs-toggle="dropdown" id="statusDropdownButton" data-id="{{ cliente_id }}" {% if not current_user.role in ['SUPERADMIN', 'ADMIN'] %}disabled{% endif %}>
             {{ cliente_status }}
           </button>
@@ -44,6 +44,15 @@
             {% endfor %}
           </ul>
         </div>
+
+        {% if suscripcion and suscripcion.fecha_status %}
+          <div class="mb-3">
+            <small class="text-muted">
+              <i class="fa-regular fa-calendar-check me-1"></i>
+              Desde el: <strong>{{ suscripcion.fecha_status | formatearFecha }}</strong>
+            </small>
+          </div>
+        {% endif %}
         
         <!-- 2. Fila: SERVER, PAQUETE, VIGENCIA -->
         <div class="text-muted small d-flex flex-wrap gap-3 mb-1 txt-detalles">

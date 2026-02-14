@@ -103,16 +103,24 @@ columns: [
               render: (data, type, row) => `<div>${data || '--'}</div><span class="text-pais">${row.pais || ''}</span>`
             },
             {
-              // Columna SUSCRIPCIÓN (Pills restaurados)
               data: 'status',
               className: 'text-center',
-              render: function (data) {
+              render: function (data, type, row) {
                 const color = 
                   data === 'Activo' ? 'bg-success' : 
                   data === 'Suspendido' ? 'bg-warning text-dark' : 
                   data === 'Eliminado' ? 'bg-danger' : 
                   'bg-info text-dark';
-                return `<span class="badge rounded-pill badge-compact ${color}">${data}</span>`;
+                
+                let html = '<span class="badge rounded-pill badge-compact ' + color + '">' + data + '</span>';
+                
+                if (row.fecha_status) {
+                    html += '<div class="mt-1" style="font-size: 0.65rem; color: #6c757d; line-height: 1;">' +
+                            '<i class="fa-regular fa-calendar-check me-1"></i>Desde: ' + row.fecha_status +
+                            '</div>';
+                }
+                
+                return html;
               }
             },
             {
@@ -165,7 +173,7 @@ columns: [
           ],
 
 
-    language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/es-MX.json' },
+    language: { url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/es-MX.json' },
     initComplete: function() {
     const api = this.api();
     actualizarTotales(api.rows().data());

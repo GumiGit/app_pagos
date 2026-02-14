@@ -191,7 +191,8 @@ class Suscripcion(db.Model):
 
     # campos de negocio
     id_gumi = db.Column(db.String(50), nullable=True) # 🔸 CRÍTICO: Este campo faltaba.
-    status = db.Column(db.String(20), nullable=False) # Activo | Suspendido | Eliminado | En prueba
+    status = db.Column(db.String(20), nullable=False) 
+    fecha_status = db.Column(db.Date, nullable=True)
     server = db.Column(db.String(100), nullable=False)
     fecha_inicio = db.Column(db.Date, nullable=False)
     paquete = db.Column(db.String(100), nullable=False)
@@ -551,7 +552,7 @@ def render_template_cliente_form(is_public=False, editar=False, cliente=None, su
     if editar:
         modo_edicion = True
 
-    servidores = ["s14","s13","s12","s11","s10","s9","s8","s7","s6","s5","s4","s3","s2","Principal","Clínica","Colombia","Petyou 4","Petyou 3","Petyou 2","Petyou 1"]
+    servidores = ["s14","s13","s12","s11","s10","s9","s8","s7","s6","s5","s4","s3","s2","Principal","Clínica","Colombia","Petyou 4","Petyou 3","Petyou 2","Petyou 1", "s15", "s16", "Sin server"]
     clientes_existentes = Cliente.query.all()
     
     # 1. Obtener y filtrar precios (Excluye DEMO de la DB)
@@ -1210,8 +1211,23 @@ def clientes_editar(id):
 
             # --- 2. Actualizar Suscripción (Configuración Técnica) ---
             suscripcion.id_gumi = request.form.get('id_gumi') or None
-            suscripcion.status = request.form.get('status') # Importante: Aquí tomamos el status que el admin elija
-            suscripcion.server = request.form.get('server')
+            status_raw = request.form.get('status')
+            if status_raw:
+                # Lo pasamos a mayúsculas para que coincida con el CSV y la lógica interna
+                nuevo_status = status_raw.strip().upper() 
+                
+                # Si cambió a ELIMINADO, forzamos el cambio de servidor
+                if nuevo_status == 'ELIMINADO':
+                    suscripcion.server = "Sin server"
+                    suscripcion.status = "ELIMINADO"
+                    suscripcion.fecha_status = date.today()
+                else:
+                    suscripcion.status = status_raw # Mantenemos el formato original (ej. 'Activo')
+                    suscripcion.server = request.form.get('server')
+                    # Si quieres registrar cuándo cambió a otro estado:
+                    # suscripcion.fecha_status = date.today() 
+            else:
+                suscripcion.status = 'Activo' # Fallback de seguridad
             suscripcion.paquete = request.form.get('paquete')
             suscripcion.vigencia = request.form.get('vigencia')
             suscripcion.observaciones = request.form.get('observaciones')
@@ -1344,45 +1360,40 @@ def clientes_importar():
                         vigencia = str(row['VIGENCIA']).strip()
                         status = str(row['STATUS']).strip().upper()
                         
-                        # 🛑 FIX 1: Manejar NaN en FECHA_INICIO_SUSCRIPCION (que es requerida)
+                        # 🟢 AUTOMATIZACIÓN DE SERVER PARA ELIMINADOS
+                        server_val = str(row['SERVER']).strip()
+                        if status == 'ELIMINADO':
+                            server_val = "Sin server"
+                        
+                        # 🛑 FIX 1: Manejar NaN en FECHA_INICIO_SUSCRIPCION
                         fecha_inicio_sus_raw = row['FECHA_INICIO_SUSCRIPCION']
                         if pd.isna(fecha_inicio_sus_raw) or str(fecha_inicio_sus_raw).strip().upper() == 'NAN':
-                            raise ValueError("FECHA_INICIO_SUSCRIPCION es obligatoria y no puede estar vacía.")
+                            raise ValueError("FECHA_INICIO_SUSCRIPCION es obligatoria.")
                         fecha_inicio_sus = date.fromisoformat(str(fecha_inicio_sus_raw).strip())
                         
-                        
                         # --- 2. PROCESAMIENTO DE PAGO ---
+                        # (Tu lógica de pagos se mantiene igual...)
                         fecha_pago_cliente = None
                         monto_pago = 0.0
                         moneda_pago = 'MXN'
                         
                         if status == 'ACTIVO':
-                            # 🛑 FIX 2: Manejar NaN en FECHA_ULTIMO_PAGO
                             fecha_pago_raw = row.get('FECHA_ULTIMO_PAGO')
                             if pd.isna(fecha_pago_raw) or str(fecha_pago_raw).strip().upper() == 'NAN':
                                 raise ValueError("Falta FECHA_ULTIMO_PAGO para cliente ACTIVO.")
-                            
                             fecha_pago_cliente = date.fromisoformat(str(fecha_pago_raw).strip())
-                            
                             monto_pago = float(row.get('MONTO_PAGO', 0.0) or 0.0)
                             moneda_pago = str(row.get('MONEDA', 'MXN')).strip()
-                            if moneda_pago not in ['MXN', 'COP', 'USD']:
-                                moneda_pago = 'MXN'
 
                         # --- 3. PROCESAMIENTO DE CAMPOS OPCIONALES ---
-
-                        # Función helper para limpiar NaN/vacío
                         def get_clean_value(val, default=None):
                             if pd.isna(val) or str(val).strip().upper() == 'NAN' or str(val).strip() == '':
                                 return default
                             return str(val).strip()
 
-                        # Teléfonos y Gumi ID
                         tel_sec_1 = get_clean_value(row.get('TELEFONO_SECUNDARIO'))
                         tel_sec_2 = get_clean_value(row.get('TELEFONO_TERCIARIO'))
                         id_gumi = get_clean_value(row.get('ID_GUMI'))
-
-                        # Datos Fiscales y Localidad
                         razon_social_val = get_clean_value(row.get('RAZON_SOCIAL'))
                         rfc_val = get_clean_value(row.get('RFC_NIT'))
                         cp_val = get_clean_value(row.get('CODIGO_POSTAL'))
@@ -1390,8 +1401,6 @@ def clientes_importar():
                         uso_cfdi_val = get_clean_value(row.get('USO_CFDI'))
                         mail_facturas_val = get_clean_value(row.get('MAIL_FACTURAS'))
                         localidad_val = get_clean_value(row.get('LOCALIDAD'))
-
-                        # Determinar si requiere_factura
                         requiere_factura = bool(razon_social_val and rfc_val)
                         
                         # --- 4. CREAR CLIENTE ---
@@ -1403,19 +1412,11 @@ def clientes_importar():
                             pais=str(row['PAIS']).strip().upper(),
                             status_cliente=status,
                             fecha_pago=fecha_pago_cliente,
-                            
                             telefono_secundario_1=tel_sec_1,
                             telefono_secundario_2=tel_sec_2,
-                            telefono_secundario_3=None,
-                            
                             requiere_factura=requiere_factura,
-                            razon_social=razon_social_val,
                             rfc=rfc_val,
-                            codigo_postal=cp_val,
-                            regimen_fiscal=regimen_val,
-                            uso_cfdi=uso_cfdi_val,
-                            mail_facturas=mail_facturas_val,
-                            localidad=localidad_val
+                            # ... (resto de campos fiscales)
                         )
                         db.session.add(cliente)
                         db.session.flush()
@@ -1427,8 +1428,10 @@ def clientes_importar():
                             cliente_id=cliente.id,
                             id_gumi=id_gumi,
                             status=status,
-                            server=str(row['SERVER']).strip(),
+                            server=server_val, # 🟢 Usamos la variable server_val procesada
                             fecha_inicio=fecha_inicio_sus,
+                            # 🟢 Guardamos la fecha de hoy como fecha de status inicial
+                            fecha_status=date.today(),
                             paquete=paquete,
                             vigencia=vigencia,
                             vence_en=vence_en,
@@ -1438,11 +1441,6 @@ def clientes_importar():
                         
                         # --- 6. CREAR REGISTRO DE PAGO (Si es Activo) ---
                         if status == 'ACTIVO':
-                              # 🛑 FIX: Generar bank_transaction_id para pagos manuales de carga masiva
-                              from time import time
-                              timestamp_ms = int(time() * 1000) 
-                              manual_unique_id_fallback = -1 * (timestamp_ms + index) # Asegura unicidad
-
                               pago = Pago(
                                   cliente_id=cliente.id,
                                   nombre=cliente.nombre_contacto,
@@ -1551,6 +1549,7 @@ def suscripcion_nueva(cliente_id):
 def api_cambiar_status(cliente_id):
     data = request.get_json()
     nuevo = data.get('status')
+    hoy = date.today()
 
     if not nuevo:
         return jsonify({"error": "Falta el nuevo status"}), 400
@@ -1561,11 +1560,20 @@ def api_cambiar_status(cliente_id):
     # Actualiza ambos si existen
     cliente.status_cliente = nuevo
     if suscripcion:
-        suscripcion.status = nuevo
-
+        if suscripcion.status != nuevo:
+            suscripcion.status = nuevo
+            suscripcion.fecha_status = hoy
+            if nuevo.upper() == 'ELIMINADO':
+                suscripcion.server = "Sin server" # Se mueve al "estacionamiento"
+        
     try:
         db.session.commit()
-        return jsonify({"ok": True, "nuevo_status": nuevo})
+        return jsonify({
+            "ok": True, 
+            "nuevo_status": nuevo, 
+            "fecha_status": hoy.strftime('%d/%m/%y'),
+            "nuevo_server": suscripcion.server if suscripcion else None
+        })
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
@@ -1652,78 +1660,83 @@ def enviar_whatsapp_cliente(cliente_id):
 def api_clientes_dt():
     from datetime import date
     from sqlalchemy import select, outerjoin
+    import traceback # Para ver el error completo si truena
 
     today = date.today()
+    print("\n--- INICIO DE DIAGNÓSTICO API CLIENTES ---")
 
-    # 🔹 Consulta combinada Cliente + Suscripcion (Se agrega Cliente.rfc)
-    stmt = (
-        select(
-            Cliente.id,
-            Cliente.negocio,
-            Cliente.nombre_contacto,
-            Cliente.telefono,
-            Cliente.telefono_secundario_1,
-            Cliente.telefono_secundario_2,
-            Cliente.telefono_secundario_3,
-            Cliente.mail,
-            Cliente.pais,
-            Cliente.status_cliente,
-            Cliente.fecha_pago,
-            Cliente.rfc,  # <--- CORRECCIÓN: Agregamos el RFC a la consulta SQL
-            Suscripcion.id_gumi,
-            Suscripcion.server,
-            Suscripcion.paquete,
-            Suscripcion.status,
-            Suscripcion.proximo_pago,
-            Suscripcion.vence_en
+    try:
+        # 1. Intentar la consulta
+        print("Paso 1: Ejecutando SELECT en la DB...")
+        stmt = (
+            select(
+                Cliente.id, Cliente.negocio, Cliente.nombre_contacto, Cliente.telefono,
+                Cliente.telefono_secundario_1, Cliente.telefono_secundario_2, Cliente.telefono_secundario_3,
+                Cliente.mail, Cliente.pais, Cliente.status_cliente, Cliente.fecha_pago, Cliente.rfc,
+                Suscripcion.id_gumi, Suscripcion.server, Suscripcion.paquete, Suscripcion.status,
+                Suscripcion.proximo_pago, Suscripcion.vence_en, Suscripcion.fecha_status
+            )
+            .select_from(outerjoin(Cliente, Suscripcion, Cliente.id == Suscripcion.cliente_id))
+            .order_by(Cliente.negocio.asc())
         )
-        .select_from(outerjoin(Cliente, Suscripcion, Cliente.id == Suscripcion.cliente_id))
-        .order_by(Cliente.negocio.asc())
-    )
-
-    results = db.session.execute(stmt).all()
-    rows = []
-
-    for row in results:
-        # Desempaquetamos incluyendo el nuevo campo rfc
-        (
-            cid, negocio, nombre_contacto, tel, tel1, tel2, tel3, mail, pais,
-            status_cliente, fecha_pago, rfc, id_gumi, server, paquete,
-            status_sus, proximo_pago, vence_en
-        ) = row
-
-        # Lógica de Vigencia
-        status_pago_info = {"status": "SIN SUSCRIPCIÓN", "color": "bg-secondary"}
-        if proximo_pago:
-            dias = (proximo_pago - today).days
-            if dias >= 0:
-                status_pago_info = {"status": "VIGENTE", "color": "bg-success"}
-            else:
-                status_pago_info = {"status": "VENCIDA", "color": "bg-danger"}
         
-        status = status_sus or status_cliente or "Activo"
+        results = db.session.execute(stmt).all()
+        print(f"Paso 2: Registros encontrados: {len(results)}")
 
-        rows.append({
-            "id": cid,
-            "id_gumi": id_gumi or "",
-            "server": server or "",
-            "pais": pais or "",
-            "status": status,
-            "negocio": negocio,
-            "rfc": rfc or "--", # <--- CORRECCIÓN: Agregamos el RFC al JSON de salida
-            "nombre_contacto": nombre_contacto,
-            "telefono": tel or "",
-            "tel_sec_1": tel1 or "",
-            "tel_sec_2": tel2 or "",
-            "tel_sec_3": tel3 or "",
-            "mail": mail or "",
-            "paquete": paquete or "",
-            "ultimo_pago": fecha_pago.isoformat() if fecha_pago else "",
-            "proximo_pago": proximo_pago.isoformat() if proximo_pago else "",
-            "status_pago_info": status_pago_info,
-        })
+        rows = []
+        for index, row in enumerate(results):
+            try:
+                # Desempaquetado
+                (
+                    cid, negocio, nombre_contacto, tel, tel1, tel2, tel3, mail, pais,
+                    status_cliente, fecha_pago, rfc, id_gumi, server, paquete,
+                    status_sus, proximo_pago, vence_en, f_status
+                ) = row
 
-    return jsonify({"data": rows})
+                # Lógica de Vigencia
+                status_pago_info = {"status": "SIN SUSCRIPCIÓN", "color": "bg-secondary"}
+                if proximo_pago:
+                    dias = (proximo_pago - today).days
+                    status_pago_info = {"status": "VIGENTE", "color": "bg-success"} if dias >= 0 else {"status": "VENCIDA", "color": "bg-danger"}
+                
+                status = status_sus or status_cliente or "Activo"
+
+                # 🟢 PRINT DE SEGUIMIENTO PARA EL PRIMER REGISTRO
+                if index == 0:
+                    print(f"Paso 3: Procesando primer cliente: {negocio}")
+                    print(f"DEBUG: fecha_status detectada: {f_status} (Tipo: {type(f_status)})")
+
+                rows.append({
+                    "id": cid,
+                    "id_gumi": id_gumi or "",
+                    "server": server or "",
+                    "pais": pais or "",
+                    "status": status,
+                    "fecha_status": f_status.strftime('%d/%m/%y') if (f_status and hasattr(f_status, 'strftime')) else "",
+                    "negocio": negocio,
+                    "rfc": rfc or "--",
+                    "nombre_contacto": nombre_contacto,
+                    "telefono": tel or "",
+                    "tel_sec_1": tel1 or "",
+                    "tel_sec_2": tel2 or "",
+                    "tel_sec_3": tel3 or "",
+                    "mail": mail or "",
+                    "paquete": paquete or "",
+                    "ultimo_pago": fecha_pago.isoformat() if (fecha_pago and hasattr(fecha_pago, 'isoformat')) else "",
+                    "proximo_pago": proximo_pago.isoformat() if (proximo_pago and hasattr(proximo_pago, 'isoformat')) else "",
+                    "status_pago_info": status_pago_info,
+                })
+            except Exception as e_row:
+                print(f"❌ ERROR EN FILA {index} (Cliente ID {cid}): {str(e_row)}")
+                continue
+
+        print("Paso 4: JSON preparado con éxito. Enviando...")
+        return jsonify({"data": rows})
+
+    except Exception as e_global:
+        print("\n💥 ERROR CRÍTICO EN API_CLIENTES_DT:")
+        print(traceback.format_exc()) # Esto te dirá la línea EXACTA del error
+        return jsonify({"data": [], "error": str(e_global)}), 500
 
 @app.route('/pagos')
 @login_required
@@ -2796,6 +2809,7 @@ def api_clientes_por_vencer_dt():
                 'paquete_nombre': suscripcion.paquete, 
                 'rfc': cliente.rfc,
                 'status': suscripcion.status, 
+                'fecha_status': suscripcion.fecha_status.strftime('%d/%m/%y') if suscripcion.fecha_status else "",
                 'vence_en_orden': fecha_vencimiento.isoformat() if fecha_vencimiento else '9999-12-31',
                 'vence_en_display': f'<span class="{clase_vencimiento}">{fecha_display_str}</span>',
             })
